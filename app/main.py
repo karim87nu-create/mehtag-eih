@@ -1,4 +1,4 @@
-﻿import re
+import re
 import hashlib
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
@@ -48,17 +48,17 @@ def understand_request_v2(text: str):
 
     # Intent
     directed_patterns = [
-        r'(?:Ù…Ù†|Ù…ÙÙ†)\s+([A-Za-z\u0600-\u06FF][A-Za-z0-9\u0600-\u06FF .&_-]{1,40})',
-        r'(?:Ø§Ø·Ù„Ø¨Ù„ÙŠ|Ù‡Ø§ØªÙ„ÙŠ|Ø¬ÙŠØ¨Ù„ÙŠ)\s+.+?\s+(?:Ù…Ù†|Ù…ÙÙ†)\s+([A-Za-z\u0600-\u06FF][A-Za-z0-9\u0600-\u06FF .&_-]{1,40})'
+        r'(?:من|مِن)\s+([A-Za-z\u0600-\u06FF][A-Za-z0-9\u0600-\u06FF .&_-]{1,40})',
+        r'(?:اطلبلي|هاتلي|جيبلي)\s+.+?\s+(?:من|مِن)\s+([A-Za-z\u0600-\u06FF][A-Za-z0-9\u0600-\u06FF .&_-]{1,40})'
     ]
     merchant = None
     for p in directed_patterns:
         mm = re.search(p, raw, re.I)
         if mm:
-            merchant = mm.group(1).strip(" .ØŒ")
+            merchant = mm.group(1).strip(" .،")
             break
 
-    remembered_words = ["Ø§Ù„Ù…Ø¹ØªØ§Ø¯", "Ø²ÙŠ ÙƒÙ„ Ù…Ø±Ø©", "Ù†ÙØ³ Ø§Ù„Ù„ÙŠ ÙØ§Øª", "Ù†ÙØ³Ù‡ ØªØ§Ù†ÙŠ", "ÙƒØ±Ø±"]
+    remembered_words = ["المعتاد", "زي كل مرة", "نفس اللي فات", "نفسه تاني", "كرر"]
     if any(x in low for x in remembered_words):
         intent_type = "REMEMBERED"
     elif merchant:
@@ -68,23 +68,23 @@ def understand_request_v2(text: str):
 
     # Budget
     budget = None
-    bm = re.search(r'(?:Ø­Ø¯ÙˆØ¯|Ù„Ø­Ø¯|Ù…ÙŠØ²Ø§Ù†ÙŠ(?:Ø©|ØªÙŠ)|Ø¨Ø­Ø¯ Ø£Ù‚ØµÙ‰|Ø¨Ø­Ø¯ Ø§Ù‚ØµÙ‰)\s*([0-9Ù -Ù©][0-9Ù -Ù©,\.]*)\s*(?:Ø¬|Ø¬Ù†ÙŠÙ‡|Ø§Ù„Ù|Ø£Ù„Ù|k)?', raw, re.I)
+    bm = re.search(r'(?:حدود|لحد|ميزاني(?:ة|تي)|بحد أقصى|بحد اقصى)\s*([0-9٠-٩][0-9٠-٩,\.]*)\s*(?:ج|جنيه|الف|ألف|k)?', raw, re.I)
     if bm:
-        digits = bm.group(1).translate(str.maketrans("Ù Ù¡Ù¢Ù£Ù¤Ù¥Ù¦Ù§Ù¨Ù©","0123456789")).replace(",","")
+        digits = bm.group(1).translate(str.maketrans("٠١٢٣٤٥٦٧٨٩","0123456789")).replace(",","")
         try:
             budget=float(digits)
             tail=raw[bm.end()-8:bm.end()+8].lower()
-            if "Ø§Ù„Ù" in tail or "Ø£Ù„Ù" in tail or "k" in tail:
+            if "الف" in tail or "ألف" in tail or "k" in tail:
                 budget*=1000
         except: pass
 
     # Area and deadline/time are intentionally lightweight
     area = None
-    am = re.search(r'(?:ÙŠÙˆØµÙ„|ØªÙˆØµÙŠÙ„|ÙÙŠ|Ù„Ù€|Ø§Ù„Ù‰|Ø¥Ù„Ù‰)\s+(Ù…Ø¯ÙŠÙ†Ø© Ù†ØµØ±|Ù…ØµØ± Ø§Ù„Ø¬Ø¯ÙŠØ¯Ø©|Ø§Ù„ØªØ¬Ù…Ø¹|Ø§Ù„Ù‚Ø§Ù‡Ø±Ø© Ø§Ù„Ø¬Ø¯ÙŠØ¯Ø©|Ù…Ø¯ÙŠÙ†ØªÙŠ|Ø§Ù„Ù…Ø¹Ø§Ø¯ÙŠ|Ø§Ù„Ø²Ù…Ø§Ù„Ùƒ|Ø§Ù„Ø¯Ù‚ÙŠ|Ø§Ù„Ù‡Ø±Ù…|Ø§Ù„Ø¬ÙŠØ²Ø©)', raw)
+    am = re.search(r'(?:يوصل|توصيل|في|لـ|الى|إلى)\s+(مدينة نصر|مصر الجديدة|التجمع|القاهرة الجديدة|مدينتي|المعادي|الزمالك|الدقي|الهرم|الجيزة)', raw)
     if am: area=am.group(1)
 
     deadline = None
-    dm = re.search(r'(Ø§Ù„ÙŠÙˆÙ…|Ø¨ÙƒØ±Ø©|ØºØ¯Ø§|ØºØ¯Ø§Ù‹|Ø§Ù„Ø£Ø­Ø¯|Ø§Ù„Ø§Ø­Ø¯|Ø§Ù„Ø§Ø«Ù†ÙŠÙ†|Ø§Ù„Ø¥Ø«Ù†ÙŠÙ†|Ø§Ù„Ø«Ù„Ø§Ø«Ø§Ø¡|Ø§Ù„Ø£Ø±Ø¨Ø¹Ø§Ø¡|Ø§Ù„Ø§Ø±Ø¨Ø¹Ø§Ø¡|Ø§Ù„Ø®Ù…ÙŠØ³|Ø§Ù„Ø¬Ù…Ø¹Ø©|Ø§Ù„Ø³Ø¨Øª)(?:\s+(?:Ø§Ù„Ø³Ø§Ø¹Ø©\s*)?\d{1,2}(?::\d{2})?\s*(?:Øµ|Ù…)?)?', raw)
+    dm = re.search(r'(اليوم|بكرة|غدا|غداً|الأحد|الاحد|الاثنين|الإثنين|الثلاثاء|الأربعاء|الاربعاء|الخميس|الجمعة|السبت)(?:\s+(?:الساعة\s*)?\d{1,2}(?::\d{2})?\s*(?:ص|م)?)?', raw)
     if dm: deadline=dm.group(0)
 
     return {
@@ -93,7 +93,7 @@ def understand_request_v2(text: str):
     }
 
 def service_fee_for_request(req, offer):
-    """Transparent prototype fee, per caseâ€”not per message.
+    """Transparent prototype fee, per case—not per message.
     Values are illustrative until willingness-to-pay validation.
     """
     price = float(offer.price or 0)
@@ -361,7 +361,7 @@ def merchant_page(token: str, request: FastAPIRequest, db: Session = Depends(get
     if datetime.utcnow() > link.created_at + timedelta(hours=LINK_TTL_HOURS):
         link.status = "EXPIRED"; db.commit()
         log_event(db, link.request_id, "MERCHANT_LINK_EXPIRED", token[:8])
-        return HTMLResponse("<html dir='rtl'><body><h2>Ø§Ù†ØªÙ‡Øª ØµÙ„Ø§Ø­ÙŠØ© Ø§Ù„Ø·Ù„Ø¨.</h2></body></html>", status_code=410)
+        return HTMLResponse("<html dir='rtl'><body><h2>انتهت صلاحية الطلب.</h2></body></html>", status_code=410)
 
     req = db.query(Request).filter(Request.id == link.request_id).first()
     biz = db.query(Business).filter(Business.id == link.business_id).first()
@@ -399,7 +399,7 @@ def merchant_offer(token: str, price: float = Form(...), eta: str = Form(...),
         req.status = "OFFER_FOUND"
     db.commit()
     log_event(db, req.id, event, f"price={price};eta={eta};status={status}")
-    msg = "ØªÙ… Ø¥Ø±Ø³Ø§Ù„ Ø¹Ø±Ø¶Ùƒ Ø¨Ù†Ø¬Ø§Ø­." if is_valid else "ØªÙ… Ø§Ø³ØªÙ„Ø§Ù… Ø§Ù„Ø¹Ø±Ø¶ØŒ Ù„ÙƒÙ†Ù‡ Ø®Ø§Ø±Ø¬ Ø´Ø±ÙˆØ· Ø§Ù„Ø·Ù„Ø¨ Ø§Ù„Ø­Ø§Ù„ÙŠØ©."
+    msg = "تم إرسال عرضك بنجاح." if is_valid else "تم استلام العرض، لكنه خارج شروط الطلب الحالية."
     return HTMLResponse(f"<html dir='rtl'><body style='font-family:Arial;padding:40px'><h2>{msg}</h2></body></html>")
 
 
@@ -423,21 +423,21 @@ def offer_score(db, req, offer):
     if req.budget is not None:
         if offer.price <= req.budget:
             score += 18
-            reasons.append("Ø¯Ø§Ø®Ù„ Ù…ÙŠØ²Ø§Ù†ÙŠØªÙƒ")
+            reasons.append("داخل ميزانيتك")
         else:
             over = (offer.price - req.budget) / max(req.budget, 1)
             score -= min(45, over * 100)
-            reasons.append("Ø£Ø¹Ù„Ù‰ Ù…Ù† Ø§Ù„Ù…ÙŠØ²Ø§Ù†ÙŠØ©")
+            reasons.append("أعلى من الميزانية")
 
     perf = business_performance(db, offer.business_id)
     total = perf.verified_ok + perf.issues + perf.cancellations
     if total >= 3:
         success_rate = perf.verified_ok / max(total, 1)
         score += success_rate * 25
-        reasons.append(f"Ø³Ø¬Ù„ Ù†ØªÙŠØ¬Ø© Ù†Ø§Ø¬Ø­Ø© {round(success_rate*100)}%")
+        reasons.append(f"سجل نتيجة ناجحة {round(success_rate*100)}%")
     else:
         score -= 3
-        reasons.append("Ø³Ø¬Ù„ Ø§Ù„ØªÙ†ÙÙŠØ° Ù„Ø³Ù‡ Ù…Ø­Ø¯ÙˆØ¯")
+        reasons.append("سجل التنفيذ لسه محدود")
 
     score -= perf.cancellations * 3
     score -= perf.issues * 2
@@ -448,10 +448,10 @@ def offer_score(db, req, offer):
     prefs = confirmed_preferences(db)
     notes = (offer.notes or "").lower()
     for p in prefs:
-        if p.preference_key == "warranty" and "Ø¶Ù…Ø§Ù†" in p.preference_value:
-            if "Ø¶Ù…Ø§Ù† Ø±Ø³Ù…ÙŠ" in notes or "Ø¶Ù…Ø§Ù† Ø§Ù„ÙˆÙƒÙŠÙ„" in notes:
+        if p.preference_key == "warranty" and "ضمان" in p.preference_value:
+            if "ضمان رسمي" in notes or "ضمان الوكيل" in notes:
                 score += 12
-                reasons.append("Ù…Ø·Ø§Ø¨Ù‚ Ù„ØªÙØ¶ÙŠÙ„Ùƒ ÙÙŠ Ø§Ù„Ø¶Ù…Ø§Ù†")
+                reasons.append("مطابق لتفضيلك في الضمان")
     return round(score, 2), reasons
 
 def ranked_offers_with_reasons(db, req, offers):
@@ -578,12 +578,12 @@ def learn_from_verified_outcome(db, req):
     """
     text = req.raw_text.lower()
     candidates = []
-    if "Ø¶Ù…Ø§Ù† Ø±Ø³Ù…ÙŠ" in text or "Ø¶Ù…Ø§Ù† Ø§Ù„ÙˆÙƒÙŠÙ„" in text:
-        candidates.append(("warranty", "ÙŠÙØ¶Ù„ Ø§Ù„Ø¶Ù…Ø§Ù† Ø§Ù„Ø±Ø³Ù…ÙŠ"))
-    if "Ù…Ø³Ø§Ø¡" in text or "Ø¨Ø§Ù„Ù„ÙŠÙ„" in text:
-        candidates.append(("time_window", "ÙŠÙØ¶Ù„ Ø§Ù„ØªÙ†ÙÙŠØ° Ù…Ø³Ø§Ø¡Ù‹"))
-    if "Ø§Ù„ØµØ¨Ø­" in text or "ØµØ¨Ø§Ø­" in text:
-        candidates.append(("time_window", "ÙŠÙØ¶Ù„ Ø§Ù„ØªÙ†ÙÙŠØ° ØµØ¨Ø§Ø­Ù‹Ø§"))
+    if "ضمان رسمي" in text or "ضمان الوكيل" in text:
+        candidates.append(("warranty", "يفضل الضمان الرسمي"))
+    if "مساء" in text or "بالليل" in text:
+        candidates.append(("time_window", "يفضل التنفيذ مساءً"))
+    if "الصبح" in text or "صباح" in text:
+        candidates.append(("time_window", "يفضل التنفيذ صباحًا"))
 
     for key, value in candidates:
         row = db.query(LearnedPreference).filter(
@@ -620,12 +620,12 @@ def apply_confirmed_preferences(db, parsed, raw_text):
     for p in confirmed_preferences(db):
         if p.preference_key == "warranty":
             # Explicit contrary/alternative wording wins over memory.
-            if not any(x in text for x in ["Ù…Ù† ØºÙŠØ± Ø¶Ù…Ø§Ù†", "Ø¨Ø¯ÙˆÙ† Ø¶Ù…Ø§Ù†", "Ù…Ø´ Ù…Ù‡Ù… Ø§Ù„Ø¶Ù…Ø§Ù†"]):
+            if not any(x in text for x in ["من غير ضمان", "بدون ضمان", "مش مهم الضمان"]):
                 parsed["confirmed_warranty_preference"] = p.preference_value
                 applied.append(p.preference_value)
         elif p.preference_key == "time_window":
             # Don't inject a time preference if user already stated a time window.
-            explicit_time = any(x in text for x in ["Ø§Ù„ØµØ¨Ø­", "ØµØ¨Ø§Ø­", "Ù…Ø³Ø§Ø¡", "Ø¨Ø§Ù„Ù„ÙŠÙ„", "Ø§Ù„Ø¸Ù‡Ø±"])
+            explicit_time = any(x in text for x in ["الصبح", "صباح", "مساء", "بالليل", "الظهر"])
             if not explicit_time:
                 parsed["confirmed_time_preference"] = p.preference_value
                 applied.append(p.preference_value)
@@ -745,46 +745,46 @@ def detect_followup_candidate(text: str):
     t = raw.lower()
 
     # Completed/no-action messages should normally not create noise.
-    completed = ["ØªÙ… Ø§Ù„ØªØ³Ù„ÙŠÙ… Ø¨Ù†Ø¬Ø§Ø­", "ØªÙ… Ø§Ù„Ø§Ø³ØªÙ„Ø§Ù… Ø¨Ù†Ø¬Ø§Ø­", "ØªÙ…Øª Ø§Ù„Ø¹Ù…Ù„ÙŠØ© Ø¨Ù†Ø¬Ø§Ø­",
-                 "ØªÙ… Ø¥Ù„ØºØ§Ø¡ Ø§Ù„Ø·Ù„Ø¨", "ØªÙ… Ø§Ù„ØºØ§Ø¡ Ø§Ù„Ø·Ù„Ø¨"]
+    completed = ["تم التسليم بنجاح", "تم الاستلام بنجاح", "تمت العملية بنجاح",
+                 "تم إلغاء الطلب", "تم الغاء الطلب"]
     if any(x in t for x in completed):
         return None
 
     patterns = [
         {
-            "keys": ["Ø®Ø±Ø¬ Ù„Ù„ØªÙˆØµÙŠÙ„", "Ù‚ÙŠØ¯ Ø§Ù„ØªÙˆØµÙŠÙ„", "Ø³ÙŠØªÙ… Ø§Ù„ØªÙˆØµÙŠÙ„", "Ù…ÙˆØ¹Ø¯ Ø§Ù„ØªØ³Ù„ÙŠÙ…", "Ø´Ø­Ù†Ø©", "Ø§Ù„Ø´Ø­Ù†Ø©"],
-            "type": "Ø·Ù„Ø¨ / Ø´Ø­Ù†Ø©",
-            "action": "Ù…ØªØ§Ø¨Ø¹Ø© ÙˆØµÙˆÙ„ Ø§Ù„Ø·Ù„Ø¨ ÙˆØ§Ù„ØªØ¯Ø®Ù„ Ù„Ùˆ Ø§Ù„Ù…ÙˆØ¹Ø¯ Ø¹Ø¯Ù‰ Ø¨Ø¯ÙˆÙ† ØªØ³Ù„ÙŠÙ…",
+            "keys": ["خرج للتوصيل", "قيد التوصيل", "سيتم التوصيل", "موعد التسليم", "شحنة", "الشحنة"],
+            "type": "طلب / شحنة",
+            "action": "متابعة وصول الطلب والتدخل لو الموعد عدى بدون تسليم",
             "watch_for": "DELIVERY",
         },
         {
-            "keys": ["ØµÙŠØ§Ù†Ø©", "Ø§Ù„ÙÙ†ÙŠ", "Ø²ÙŠØ§Ø±Ø© ÙÙ†ÙŠ"],
-            "type": "ØµÙŠØ§Ù†Ø©",
-            "action": "Ù…ØªØ§Ø¨Ø¹Ø© Ø­Ø¶ÙˆØ± Ø§Ù„ÙÙ†ÙŠ Ø«Ù… Ø§Ù„ØªØ£ÙƒØ¯ Ø¥Ù† Ø§Ù„Ù…Ø´ÙƒÙ„Ø© Ø§ØªØ­Ù„Øª",
+            "keys": ["صيانة", "الفني", "زيارة فني"],
+            "type": "صيانة",
+            "action": "متابعة حضور الفني ثم التأكد إن المشكلة اتحلت",
             "watch_for": "SERVICE_OUTCOME",
         },
         {
-            "keys": ["ØªÙ… Ø§Ù„Ø­Ø¬Ø²", "ØªØ£ÙƒÙŠØ¯ Ø§Ù„Ø­Ø¬Ø²", "Ù…ÙˆØ¹Ø¯Ùƒ", "Ù…ÙˆØ¹Ø¯ "],
-            "type": "Ø­Ø¬Ø² / Ù…ÙˆØ¹Ø¯",
-            "action": "Ù…ØªØ§Ø¨Ø¹Ø© Ø§Ù„Ù…ÙˆØ¹Ø¯ ÙˆØ£ÙŠ ØªØºÙŠÙŠØ± Ø£Ùˆ Ø¥Ù„ØºØ§Ø¡ Ø«Ù… ØªØ£ÙƒÙŠØ¯ Ø§Ù„Ù†ØªÙŠØ¬Ø©",
+            "keys": ["تم الحجز", "تأكيد الحجز", "موعدك", "موعد "],
+            "type": "حجز / موعد",
+            "action": "متابعة الموعد وأي تغيير أو إلغاء ثم تأكيد النتيجة",
             "watch_for": "APPOINTMENT",
         },
         {
-            "keys": ["ØªÙ… Ø§Ù„ØªØ­ÙˆÙŠÙ„", "ØªØ­ÙˆÙŠÙ„ Ù…Ø¨Ù„Øº", "Ø­ÙˆØ§Ù„Ø©"],
-            "type": "ØªØ­ÙˆÙŠÙ„",
-            "action": "Ø§Ù„ØªØ£ÙƒØ¯ Ù…Ù† ÙˆØµÙˆÙ„ Ø§Ù„ØªØ­ÙˆÙŠÙ„ Ù„Ù„Ø·Ø±Ù Ø§Ù„Ù…Ù‚ØµÙˆØ¯",
+            "keys": ["تم التحويل", "تحويل مبلغ", "حوالة"],
+            "type": "تحويل",
+            "action": "التأكد من وصول التحويل للطرف المقصود",
             "watch_for": "RECEIPT_CONFIRMATION",
         },
         {
-            "keys": ["ÙØ§ØªÙˆØ±Ø©", "Ù…Ø³ØªØ­Ù‚", "Ø§Ø³ØªØ­Ù‚Ø§Ù‚", "ÙŠØ±Ø¬Ù‰ Ø§Ù„Ø³Ø¯Ø§Ø¯"],
-            "type": "ÙØ§ØªÙˆØ±Ø©",
-            "action": "Ù…ØªØ§Ø¨Ø¹Ø© Ù…ÙˆØ¹Ø¯ Ø§Ù„Ø§Ø³ØªØ­Ù‚Ø§Ù‚ ÙˆØªØ£ÙƒÙŠØ¯ Ø§Ù„Ø³Ø¯Ø§Ø¯",
+            "keys": ["فاتورة", "مستحق", "استحقاق", "يرجى السداد"],
+            "type": "فاتورة",
+            "action": "متابعة موعد الاستحقاق وتأكيد السداد",
             "watch_for": "DUE_DATE",
         },
         {
-            "keys": ["ØªÙ… ØªØ£ÙƒÙŠØ¯ Ø·Ù„Ø¨", "ØªÙ… Ø§Ø³ØªÙ„Ø§Ù… Ø·Ù„Ø¨Ùƒ", "Ø±Ù‚Ù… Ø§Ù„Ø·Ù„Ø¨"],
-            "type": "Ø·Ù„Ø¨ Ø´Ø±Ø§Ø¡",
-            "action": "Ù…ØªØ§Ø¨Ø¹Ø© Ø§Ù„Ø·Ù„Ø¨ Ù„Ø­Ø¯ Ø§Ù„ØªØ³Ù„ÙŠÙ… ÙˆØªØ£ÙƒÙŠØ¯ Ø§Ù„Ù†ØªÙŠØ¬Ø©",
+            "keys": ["تم تأكيد طلب", "تم استلام طلبك", "رقم الطلب"],
+            "type": "طلب شراء",
+            "action": "متابعة الطلب لحد التسليم وتأكيد النتيجة",
             "watch_for": "ORDER_OUTCOME",
         },
     ]
@@ -799,15 +799,15 @@ def detect_followup_candidate(text: str):
     # Extract lightweight dates/times/order refs from Arabic/English transactional text.
     date_patterns = [
         r'\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b',
-        r'\b(?:Ø§Ù„Ø£Ø­Ø¯|Ø§Ù„Ø§Ø­Ø¯|Ø§Ù„Ø¥Ø«Ù†ÙŠÙ†|Ø§Ù„Ø§Ø«Ù†ÙŠÙ†|Ø§Ù„Ø«Ù„Ø§Ø«Ø§Ø¡|Ø§Ù„Ø£Ø±Ø¨Ø¹Ø§Ø¡|Ø§Ù„Ø§Ø±Ø¨Ø¹Ø§Ø¡|Ø§Ù„Ø®Ù…ÙŠØ³|Ø§Ù„Ø¬Ù…Ø¹Ø©|Ø§Ù„Ø³Ø¨Øª)\b',
-        r'\b(?:Ø§Ù„ÙŠÙˆÙ…|ØºØ¯Ø§|ØºØ¯Ø§Ù‹|Ø¨ÙƒØ±Ø©)\b',
+        r'\b(?:الأحد|الاحد|الإثنين|الاثنين|الثلاثاء|الأربعاء|الاربعاء|الخميس|الجمعة|السبت)\b',
+        r'\b(?:اليوم|غدا|غداً|بكرة)\b',
     ]
     time_patterns = [
-        r'\b\d{1,2}:\d{2}\s*(?:Øµ|Ù…|am|pm)?\b',
-        r'\bØ§Ù„Ø³Ø§Ø¹Ø©\s+\d{1,2}(?::\d{2})?\s*(?:Øµ|Ù…)?\b',
+        r'\b\d{1,2}:\d{2}\s*(?:ص|م|am|pm)?\b',
+        r'\bالساعة\s+\d{1,2}(?::\d{2})?\s*(?:ص|م)?\b',
     ]
     ref_patterns = [
-        r'(?:Ø±Ù‚Ù… Ø§Ù„Ø·Ù„Ø¨|order\s*#?|Ø·Ù„Ø¨ Ø±Ù‚Ù…)\s*[:#-]?\s*([A-Za-z0-9-]+)'
+        r'(?:رقم الطلب|order\s*#?|طلب رقم)\s*[:#-]?\s*([A-Za-z0-9-]+)'
     ]
     expected = next((m.group(0) for p in date_patterns for m in [re.search(p, raw, re.I)] if m), None)
     time_value = next((m.group(0) for p in time_patterns for m in [re.search(p, raw, re.I)] if m), None)
@@ -829,15 +829,15 @@ def detect_followup_candidate(text: str):
 
 def transaction_event_type(text: str):
     t = text.lower()
-    if any(x in t for x in ["ØªÙ… Ø§Ù„ØªØ³Ù„ÙŠÙ…", "ØªÙ… Ø§Ù„Ø§Ø³ØªÙ„Ø§Ù…"]): return "DELIVERED"
-    if any(x in t for x in ["Ø®Ø±Ø¬ Ù„Ù„ØªÙˆØµÙŠÙ„", "Ù‚ÙŠØ¯ Ø§Ù„ØªÙˆØµÙŠÙ„"]): return "OUT_FOR_DELIVERY"
-    if any(x in t for x in ["ØªÙ… Ø§Ù„Ø´Ø­Ù†", "ØªÙ… Ø¥Ø±Ø³Ø§Ù„ Ø§Ù„Ø´Ø­Ù†Ø©"]): return "SHIPPED"
-    if any(x in t for x in ["ØªÙ… ØªØ£ÙƒÙŠØ¯ Ø·Ù„Ø¨", "ØªÙ… Ø§Ø³ØªÙ„Ø§Ù… Ø·Ù„Ø¨Ùƒ"]): return "CONFIRMED"
-    if any(x in t for x in ["ØªÙ… Ø¥Ù„ØºØ§Ø¡", "ØªÙ… Ø§Ù„ØºØ§Ø¡"]): return "CANCELLED"
-    if any(x in t for x in ["Ø§Ù„ÙÙ†ÙŠ ÙÙŠ Ø§Ù„Ø·Ø±ÙŠÙ‚", "Ø§Ù„ÙÙ†ÙŠ Ù…ØªØ¬Ù‡"]): return "TECHNICIAN_EN_ROUTE"
-    if any(x in t for x in ["ØªÙ…Øª Ø§Ù„ØµÙŠØ§Ù†Ø©", "ØªÙ… Ø§Ù„Ø¥ØµÙ„Ø§Ø­", "ØªÙ… Ø§Ù„Ø§ØµÙ„Ø§Ø­"]): return "SERVICE_COMPLETED"
-    if any(x in t for x in ["ØªÙ… Ø§Ù„ØªØ­ÙˆÙŠÙ„"]): return "TRANSFER_SENT"
-    if any(x in t for x in ["ØªÙ… Ø§Ø³ØªÙ„Ø§Ù… Ø§Ù„ØªØ­ÙˆÙŠÙ„", "ÙˆØµÙ„ Ø§Ù„ØªØ­ÙˆÙŠÙ„"]): return "TRANSFER_RECEIVED"
+    if any(x in t for x in ["تم التسليم", "تم الاستلام"]): return "DELIVERED"
+    if any(x in t for x in ["خرج للتوصيل", "قيد التوصيل"]): return "OUT_FOR_DELIVERY"
+    if any(x in t for x in ["تم الشحن", "تم إرسال الشحنة"]): return "SHIPPED"
+    if any(x in t for x in ["تم تأكيد طلب", "تم استلام طلبك"]): return "CONFIRMED"
+    if any(x in t for x in ["تم إلغاء", "تم الغاء"]): return "CANCELLED"
+    if any(x in t for x in ["الفني في الطريق", "الفني متجه"]): return "TECHNICIAN_EN_ROUTE"
+    if any(x in t for x in ["تمت الصيانة", "تم الإصلاح", "تم الاصلاح"]): return "SERVICE_COMPLETED"
+    if any(x in t for x in ["تم التحويل"]): return "TRANSFER_SENT"
+    if any(x in t for x in ["تم استلام التحويل", "وصل التحويل"]): return "TRANSFER_RECEIVED"
     return "UPDATE"
 
 def find_existing_transaction(db, detected, raw_text):
@@ -871,13 +871,13 @@ def ensure_default_followup_rules(db):
     if db.query(FollowupRule).count() > 0:
         return
     defaults = [
-        ("Ø·Ù„Ø¨ / Ø´Ø­Ù†Ø©", "OUT_FOR_DELIVERY", "Ù„Ùˆ Ù…ÙÙŠØ´ ØªØ³Ù„ÙŠÙ… Ø¨Ø¹Ø¯ Ø§Ù„ÙˆÙ‚Øª Ø§Ù„Ù…ØªÙˆÙ‚Ø¹ØŒ Ø§Ø¹ØªØ¨Ø±Ù‡Ø§ Ù…ØªØ§Ø¨Ø¹Ø© Ù…ØªØ£Ø®Ø±Ø©", 180),
-        ("Ø·Ù„Ø¨ / Ø´Ø­Ù†Ø©", "DELIVERED", "Ø§Ø³Ø£Ù„ Ø§Ù„Ø¹Ù…ÙŠÙ„ Ù‡Ù„ Ø§Ù„Ø§Ø³ØªÙ„Ø§Ù… ØªÙ… ÙƒÙˆÙŠØ³ ÙˆÙ‡Ù„ ÙÙŠÙ‡ Ù…Ø´ÙƒÙ„Ø©", 30),
-        ("Ø·Ù„Ø¨ Ø´Ø±Ø§Ø¡", "DELIVERED", "Ø£ÙƒØ¯ Ø§Ù„Ù†ØªÙŠØ¬Ø© Ù…Ø¹ Ø§Ù„Ø¹Ù…ÙŠÙ„ Ø¨Ø¯Ù„ Ø¥ØºÙ„Ø§Ù‚ Ø§Ù„Ø·Ù„Ø¨ ØªÙ„Ù‚Ø§Ø¦ÙŠÙ‹Ø§", 30),
-        ("ØµÙŠØ§Ù†Ø©", "TECHNICIAN_EN_ROUTE", "ØªØ§Ø¨Ø¹ Ø­Ø¶ÙˆØ± Ø§Ù„ÙÙ†ÙŠ", 120),
-        ("ØµÙŠØ§Ù†Ø©", "SERVICE_COMPLETED", "Ø§Ø³Ø£Ù„ Ù‡Ù„ Ø§Ù„Ù…Ø´ÙƒÙ„Ø© Ø§ØªØ­Ù„Øª ÙØ¹Ù„Ù‹Ø§", 60),
-        ("ØªØ­ÙˆÙŠÙ„", "TRANSFER_SENT", "ØªØ§Ø¨Ø¹ ØªØ£ÙƒÙŠØ¯ ÙˆØµÙˆÙ„ Ø§Ù„ØªØ­ÙˆÙŠÙ„", 120),
-        ("Ø­Ø¬Ø² / Ù…ÙˆØ¹Ø¯", "CONFIRMED", "ØªØ§Ø¨Ø¹ Ø§Ù„Ù…ÙˆØ¹Ø¯ ÙˆØ£ÙŠ ØªØºÙŠÙŠØ±", 1440),
+        ("طلب / شحنة", "OUT_FOR_DELIVERY", "لو مفيش تسليم بعد الوقت المتوقع، اعتبرها متابعة متأخرة", 180),
+        ("طلب / شحنة", "DELIVERED", "اسأل العميل هل الاستلام تم كويس وهل فيه مشكلة", 30),
+        ("طلب شراء", "DELIVERED", "أكد النتيجة مع العميل بدل إغلاق الطلب تلقائيًا", 30),
+        ("صيانة", "TECHNICIAN_EN_ROUTE", "تابع حضور الفني", 120),
+        ("صيانة", "SERVICE_COMPLETED", "اسأل هل المشكلة اتحلت فعلًا", 60),
+        ("تحويل", "TRANSFER_SENT", "تابع تأكيد وصول التحويل", 120),
+        ("حجز / موعد", "CONFIRMED", "تابع الموعد وأي تغيير", 1440),
     ]
     for typ, evt, action, delay in defaults:
         db.add(FollowupRule(transaction_type=typ, trigger_event=evt, action=action,
@@ -940,7 +940,7 @@ def simulate_scan(source_text: str = Form(...), request: FastAPIRequest = None, 
     # Completed messages may still be updates to an existing case.
     if not detected:
         # Try extracting a reference from completion/update text.
-        ref_match = re.search(r'(?:Ø±Ù‚Ù… Ø§Ù„Ø·Ù„Ø¨|order\s*#?|Ø·Ù„Ø¨ Ø±Ù‚Ù…)\s*[:#-]?\s*([A-Za-z0-9-]+)', source_text, re.I)
+        ref_match = re.search(r'(?:رقم الطلب|order\s*#?|طلب رقم)\s*[:#-]?\s*([A-Za-z0-9-]+)', source_text, re.I)
         existing = None
         if ref_match:
             existing = db.query(DetectedTransaction).filter(
@@ -1217,11 +1217,11 @@ def privacy_page(request:FastAPIRequest):
 
 @app.exception_handler(404)
 async def not_found_handler(request, exc):
-    return templates.TemplateResponse("error.html",{"request":request,"title":"Ù…Ø´ Ù„Ø§Ù‚ÙŠ Ø§Ù„ØµÙØ­Ø©","message":"Ø§Ù„Ø±Ø§Ø¨Ø· Ø¯Ù‡ Ù…Ø´ Ù…ÙˆØ¬ÙˆØ¯ Ø£Ùˆ Ø§Ù†ØªÙ‡Ù‰."},status_code=404)
+    return templates.TemplateResponse("error.html",{"request":request,"title":"مش لاقي الصفحة","message":"الرابط ده مش موجود أو انتهى."},status_code=404)
 
 @app.exception_handler(500)
 async def server_error_handler(request, exc):
-    return templates.TemplateResponse("error.html",{"request":request,"title":"Ø­ØµÙ„Øª Ù…Ø´ÙƒÙ„Ø©","message":"Ø§Ù„Ø·Ù„Ø¨ Ù…Ø­ÙÙˆØ¸ Ù‚Ø¯Ø± Ø§Ù„Ø¥Ù…ÙƒØ§Ù†. Ø¬Ø±Ù‘Ø¨ ØªØ§Ù†ÙŠ Ø£Ùˆ Ø±Ø§Ø¬Ø¹ Ù„ÙˆØ­Ø© Ø§Ù„ØªØ´ØºÙŠÙ„."},status_code=500)
+    return templates.TemplateResponse("error.html",{"request":request,"title":"حصلت مشكلة","message":"الطلب محفوظ قدر الإمكان. جرّب تاني أو راجع لوحة التشغيل."},status_code=500)
 
 
 @app.post("/api/mobile/source")
@@ -1245,4 +1245,3 @@ def mobile_share(text:str=Form(...), db:Session=Depends(get_db)):
 @app.get("/mobile/setup", response_class=HTMLResponse)
 def mobile_setup(request:FastAPIRequest):
     return templates.TemplateResponse("mobile_setup.html",{"request":request})
-
