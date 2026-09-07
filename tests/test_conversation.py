@@ -46,6 +46,13 @@ def test_small_talk_and_questions_do_not_cross_action_gate():
     assert question.action.type == ActionType.NONE
 
 
+def test_degraded_mode_explains_itself_instead_of_repeating_generic_text():
+    reply = fallback("يعني إيه غير متصلة؟")
+    assert reply.intent == Intent.GENERAL_QUESTION
+    assert "المحادثة الذكية الكاملة" in reply.text
+    assert "أنا هنا. احكي براحتك" not in reply.text
+
+
 def test_gate_rejects_action_for_wrong_intent():
     reply = ProviderReply(
         "answer", Intent.GENERAL_QUESTION, .99, ResponseStyle(),

@@ -91,7 +91,10 @@
 .back-to-chat{color:var(--muted);text-decoration:none;font-size:14px}
 .hidden{display:none!important}
 .empty-thread{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:14px;padding:22px 5px 12px}
-.degraded-notice{margin-top:14px;padding:10px 13px;border-radius:14px;background:#fff7e7;color:#75551c;font-size:12px;line-height:1.7;border:1px solid #f0dfba}
+.degraded-notice{width:max-content;max-width:100%;margin:12px 4px 0;padding:7px 11px;border-radius:999px;background:#fff8e9;color:#75551c;font-size:11px;line-height:1.6;border:1px solid #f0dfba}
+.degraded-notice summary{cursor:pointer;list-style:none;font-weight:700}
+.degraded-notice summary::-webkit-details-marker{display:none}
+.degraded-notice p{max-width:320px;margin:7px 0 2px;font-size:12px;color:#75551c}
 .chat-context-card{display:flex;flex-direction:column;gap:6px;margin:4px 45px 4px 0;padding:15px 17px;border-radius:19px;background:rgba(255,255,255,.72);border:1px solid rgba(255,255,255,.9);box-shadow:var(--shadow-sm);color:var(--ink);text-decoration:none}
 .chat-context-card small{color:var(--muted);font-size:12px}
 .chat-context-card b{font-size:14px;line-height:1.55}

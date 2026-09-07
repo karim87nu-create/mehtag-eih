@@ -73,9 +73,10 @@
     <div id="emptyThread" class="empty-thread">
       <span class="live-dot"></span><span>اكتب أو اتكلم وقت ما تحب</span>
     </div>
-    <div id="degradedNotice" class="degraded-notice hidden">
-      الوضع المحدود شغّال حاليًا؛ المتابعة والحفظ متاحين، لكن قدرات المحادثة الكاملة غير متصلة.
-    </div>
+    <details id="degradedNotice" class="degraded-notice{% if not conversation_degraded %} hidden{% endif %}">
+      <summary>قدرات المحادثة محدودة</summary>
+      <p>الحفظ والمتابعة شغالين، لكن الذكاء الحواري الكامل غير متصل حاليًا.</p>
+    </details>
   </section>
 
   <section class="conversation-composer" id="composer">

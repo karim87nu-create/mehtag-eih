@@ -293,7 +293,8 @@ def home(request: FastAPIRequest, db: Session = Depends(get_db)):
     learned = preference_suggestions(db)
     return templates.TemplateResponse("home.html", {
         "request": request, "open_cases": open_cases, "memories": memories,
-        "suggestions": suggestions, "followups": followups, "learned": learned
+        "suggestions": suggestions, "followups": followups, "learned": learned,
+        "conversation_degraded": conversation_provider.degraded,
     })
 
 @app.post("/requests", response_class=HTMLResponse)

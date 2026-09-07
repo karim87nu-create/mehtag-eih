@@ -97,6 +97,12 @@ def _language(text: str) -> str:
     return "ar" if arabic >= latin else "en"
 
 
+def _normalize(text: str) -> str:
+    value = unicodedata.normalize("NFKC", text).casefold()
+    value = "".join(c for c in value if unicodedata.category(c) != "Mn")
+    return value.translate(str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ى": "ي", "ة": "ه"}))
+
+
 def _style(text: str) -> ResponseStyle:
     lang = _language(text)
     low = text.casefold()
@@ -121,7 +127,7 @@ class FallbackProvider(ConversationProvider):
     degraded = True
 
     def _intent(self, text: str, has_case: bool) -> Intent:
-        low = text.casefold().strip()
+        low = _normalize(text).strip()
         tokens = set(low.replace("؟", " ").replace("?", " ").replace("!", " ").split())
         if tokens & {"نكتة", "نكته", "joke"}:
             return Intent.SMALL_TALK
@@ -135,7 +141,7 @@ class FallbackProvider(ConversationProvider):
             return Intent.CONTINUATION
         if tokens & {"عايز", "عاوز", "محتاج", "دورلي", "هاتلي", "احجزلي", "اشتري", "book", "find", "buy", "need", "want"}:
             return Intent.NEW_REQUEST
-        if "?" in text or "؟" in text or tokens & {"ليه", "إزاي", "ازاي", "إيه", "ايه", "مين", "what", "why", "how", "who"}:
+        if "?" in text or "؟" in text or tokens & {"ليه", "ازاي", "ايه", "اي", "يعني", "مين", "what", "why", "how", "who", "mean"}:
             return Intent.GENERAL_QUESTION
         return Intent.SMALL_TALK
 
@@ -143,6 +149,7 @@ class FallbackProvider(ConversationProvider):
         style = _style(context.message)
         intent = self._intent(context.message, bool(context.active_cases))
         lang = style.language
+        normalized = _normalize(context.message)
         action = ActionProposal()
         if intent == Intent.SMALL_TALK and any(x in context.message.casefold() for x in ("نكت", "joke")):
             text = "مرة واحد راح يشتري راحة بال… قالوله خلصت، بس فيه انتظار مجاني 😄" if lang != "en" else "I tried to buy some peace of mind. It was out of stock, but the waiting list was free 😄"
@@ -164,9 +171,28 @@ class FallbackProvider(ConversationProvider):
         elif intent == Intent.DECISION:
             text = "قبل ما أنفّذ قرار، محتاج أربطه بالحالة والعرض المقصود بوضوح." if lang != "en" else "Before I act on that, I need to link the decision to the exact case and offer."
         elif intent == Intent.GENERAL_QUESTION:
-            text = "أنا شغال دلوقتي بوضع محدود، فممكن أساعد في الأسئلة البسيطة ومسارات المتابعة، لكن مش هادّعي إجابة كاملة من غير مزوّد الذكاء المتصل." if lang != "en" else "I’m currently in limited mode. I can handle simple questions and follow-up routing, but I won’t pretend to give a full answer without the connected AI provider."
+            asks_about_mode = any(term in normalized for term in ("غير متصل", "الوضع المحدود", "قدرات المحادثه", "limited mode", "not connected"))
+            if asks_about_mode:
+                text = (
+                    "يعني المحادثة الذكية الكاملة مش متوصلة بمزوّد ذكاء اصطناعي حاليًا. "
+                    "الحفظ والمتابعة وبدء الطلبات شغالين، لكن الأسئلة المفتوحة وفهم الكلام المعقّد هيبقوا أضعف."
+                    if lang != "en" else
+                    "It means the full conversational AI is not connected right now. Saving, tracking, and starting requests work, but open-ended questions and complex language will be weaker."
+                )
+            else:
+                text = "السؤال ده محتاج المحادثة الذكية الكاملة، وهي مش متصلة حاليًا. أقدر أساعدك في طلب أو متابعة محددة من غير ما أختلق إجابة." if lang != "en" else "That question needs the full conversational AI, which is not connected right now. I can still help with a specific request or follow-up without making up an answer."
         else:
-            text = "أنا هنا. احكي براحتك." if lang != "en" else "I’m here. Go ahead."
+            greeting = any(word in normalized.split() for word in ("اهلا", "هاي", "hello", "hi", "صباح", "مساء"))
+            thanks = any(word in normalized.split() for word in ("شكرا", "متشكر", "thanks", "thank"))
+            if greeting:
+                text = "أهلًا 👋 قولّي محتاج إيه." if lang != "en" else "Hi 👋 What do you need?"
+            elif thanks:
+                text = "العفو." if lang != "en" else "You’re welcome."
+            else:
+                previous = next((m.get("content", "") for m in reversed(context.history) if m.get("role") == "assistant"), "")
+                text = "مش لاقط قصدك في الوضع الأساسي. اكتبلي سؤالك أو طلبك بشكل مباشر شوية." if lang != "en" else "I couldn't reliably understand that in basic mode. Try stating the question or request a little more directly."
+                if previous == text:
+                    text = "المشكلة مش في صياغتك؛ قدرات الفهم الكاملة غير متصلة. أقدر أبدأ طلب واضح أو أتابع حالة موجودة." if lang != "en" else "The issue isn't your wording; full understanding isn't connected. I can start a clear request or follow an existing case."
         return ProviderReply(text, intent, 0.82, style, action, self.name, None, True)
 
 
