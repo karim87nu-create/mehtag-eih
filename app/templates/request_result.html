@@ -2,96 +2,96 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>طلبك شغال</title>
+<title>متابع معاك</title>
 <link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/chat.css">
 <meta name="theme-color" content="#f6f3ee">
 </head>
 <body>
-<main class="app-shell narrow">
-  <header class="app-top">
-    <a class="brand" href="/"><span class="brand-mark">م</span><span>محتاج إيه؟</span></a>
-    <a class="top-action" href="/">طلب جديد</a>
+<main class="app-shell chat-shell narrow">
+  <header class="app-top chat-top">
+    <a class="brand" href="/"><span class="brand-mark">م</span><span>معاك</span></a>
+    <a class="top-action" href="/">حاجة تانية</a>
   </header>
 
-  <section class="thread">
-    <div class="message user">{{ row.raw_text }}</div>
-
-    <div class="message assistant stage-card">
-      <div class="stage active" id="s1">
-        <div class="stage-visual"><div class="thinking-dots"><i></i><i></i><i></i></div></div>
-        <h2>بفهم اللي محتاجه…</h2>
-        <p>بطلع القيود المهمة من كلامك من غير ما أحول الموضوع لاستمارة.</p>
-      </div>
-
-      <div class="stage" id="s2">
-        <div class="stage-visual"><div class="checkmark">✓</div></div>
-        <h2>تمام، الطلب واضح.</h2>
-        <p>دلوقتي بفحص السوق والجهات اللي ممكن تكون مناسبة فعلًا.</p>
-      </div>
-
-      <div class="stage" id="s3">
-        <div class="stage-visual"><div class="orbit"></div></div>
-        <h2>بفحص الجهات المتاحة…</h2>
-        <p>دي مرحلة اكتشاف فقط. مش هقولك إن حد استلم الطلب أو قدّم عرض إلا لما ده يحصل فعلًا.</p>
-        <div class="scanline"><span></span></div>
-      </div>
-
-      <div class="stage" id="s4">
-        <div class="stage-visual"><div class="checkmark">✓</div></div>
-        {% if reachable_count > 0 %}
-          <h2>لقيت {{ reachable_count }} جهة محتملة.</h2>
-          <p>الجهات دي مرتبطة بطلبك، لكن ده <b>مش معناه إنهم استلموا الطلب</b>. هعرضلك عرض بس لما يوصل عرض فعلي.</p>
-          <div class="truth-note">النسخة الحالية تكتشف جهات حقيقية، لكن قناة التواصل التلقائي مع أي تاجر جديد لسه تحت الربط.</div>
-        {% else %}
-          <h2>لسه مفيش جهة مناسبة مؤكدة.</h2>
-          <p>الطلب متسجل، ومش هنمثل إن فيه عرض أو منفذ طالما ده ما حصلش.</p>
-        {% endif %}
-        <a class="live-link" href="/requests/{{ row.id }}">افتح المتابعة الحية</a>
-      </div>
-    </div>
-
-    {% if applied_preferences %}
-    <div class="message assistant">
-      <div class="assistant-line">
-        <span class="mini-orb"></span>
-        <div class="assistant-content">
-          <b>واخد في اعتباري اللي أنت معتمده قبل كده</b>
-          {% for p in applied_preferences %}<p>• {{ p }}</p>{% endfor %}
-        </div>
-      </div>
-    </div>
-    {% endif %}
+  <section class="conversation-hero request-thread-wrap">
+    <div class="presence"><span class="live-dot"></span><span>الموضوع شغال</span></div>
+    <div id="requestThread" class="chat-thread request-thread" data-request-id="{{ row.id }}"></div>
   </section>
 
-  <div class="bottom-composer">
-    <form action="/requests" method="post">
-      <textarea name="text" placeholder="ضيف تفصيلة أو اطلب حاجة تانية"></textarea>
-      <button class="send-circle" aria-label="إرسال">↑</button>
-    </form>
-  </div>
+  <section id="truthCard" class="truth-card hidden">
+    {% if row.status == "WAITING_OFFERS" %}
+      <span class="truth-status good">التواصل اتأكد</span>
+      <h2>الطلب خرج فعلًا لجهة عندها قناة مفعّلة.</h2>
+      <p>من هنا أنا مستني عرض فعلي. أول ما يوصل هقارن وأعرضلك الأنسب.</p>
+    {% elif row.status == "SUPPLY_FOUND_NO_CHANNEL" %}
+      <span class="truth-status warm">لقيت جهات مناسبة</span>
+      <h2>لقيت {{ reachable_count }} جهة محتملة، لكن لسه ماوصلتش الطلب ليهم بقناة تلقائية مؤكدة.</h2>
+      <p>يعني <b>مش مستني عرض لسه</b>. أنا مفرق بين إني ألاقي جهة وبين إن الجهة تستلم الطلب فعلًا.</p>
+    {% else %}
+      <span class="truth-status neutral">لسه بدور صح</span>
+      <h2>لسه ما لقيتش جهة مناسبة مؤكدة للطلب ده.</h2>
+      <p>مش هعرض اسم عشوائي ولا أقول إن فيه عرض قبل ما يبقى فيه حاجة حقيقية.</p>
+    {% endif %}
+    <a class="quiet-action solid full" href="/requests/{{ row.id }}">افتح المتابعة الحية</a>
+  </section>
+
+  <div class="request-bottom"><a class="back-to-chat" href="/">كلّمني في حاجة تانية</a></div>
 </main>
 
 <script>
 (function(){
-  const stages=[...document.querySelectorAll('.stage')];
-  const reduced=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if(reduced){stages.forEach(x=>x.classList.remove('active'));stages.at(-1).classList.add('active');return}
-  const delays=[900,820,1800];let i=0;
-  function next(){
-    if(i>=stages.length-1)return;
-    stages[i].classList.remove('active');i++;stages[i].classList.add('active');
-    if(i<stages.length-1)setTimeout(next,delays[i]||900);
+  const thread=document.getElementById('requestThread');
+  const truth=document.getElementById('truthCard');
+  const TRANSCRIPT='mehtag_chat_transcript_v3';
+  function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+  function add(role,text){
+    const el=document.createElement('div');
+    el.className='chat-message '+role+' entering';
+    el.innerHTML=role==='assistant'
+      ? `<div class="assistant-avatar">م</div><div class="bubble">${esc(text)}</div>`
+      : `<div class="bubble">${esc(text)}</div>`;
+    thread.appendChild(el);el.scrollIntoView({behavior:'smooth',block:'end'});
   }
-  setTimeout(next,delays[0]);
+  function thinking(){
+    const el=document.createElement('div');
+    el.className='chat-message assistant entering thinking-message';
+    el.innerHTML='<div class="assistant-avatar">م</div><div class="bubble"><span class="thinking-inline"><i></i><i></i><i></i></span></div>';
+    thread.appendChild(el);return el;
+  }
 
-  const statusUrl='/requests/{{ row.id }}';
-  function poll(){
-    fetch(statusUrl,{headers:{'X-Requested-With':'fetch'}})
-      .then(r=>r.text())
-      .then(html=>{if(html.includes('data-has-offer="1"')) location.href=statusUrl})
-      .catch(()=>{});
+  let transcript=null;
+  try{transcript=JSON.parse(localStorage.getItem(TRANSCRIPT)||'null')}catch(e){}
+  if(transcript&&Array.isArray(transcript.messages)) transcript.messages.forEach(m=>add(m.role,m.text));
+  else{
+    add('user',`{{ row.raw_text|e }}`);
+    add('assistant','تمام، فهمت طلبك. هبدأ أشتغل عليه خطوة بخطوة.');
   }
-  setInterval(poll,6000);
+
+  const reduced=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const wait=reduced?20:650;
+  setTimeout(()=>{
+    const t=thinking();
+    setTimeout(()=>{
+      t.remove();
+      add('assistant','بفحص الجهات الأقرب للمطلوب، وبفصل بين مجرد العثور على جهة وبين التواصل الفعلي معاها.');
+      setTimeout(()=>{
+        const t2=thinking();
+        setTimeout(()=>{
+          t2.remove();
+          {% if row.status == "WAITING_OFFERS" %}
+          add('assistant','وصلت الطلب فعليًا لقناة مفعّلة. دلوقتي أقدر أقول إني مستني عرض حقيقي.');
+          {% elif row.status == "SUPPLY_FOUND_NO_CHANNEL" %}
+          add('assistant','لقيت جهات مناسبة مبدئيًا، لكن لسه ماوصلتش الطلب ليهم بشكل مؤكد. فمش هقولك إني مستني عرض.');
+          {% else %}
+          add('assistant','لسه ما عنديش جهة مناسبة مؤكدة. هسيب الحالة صريحة بدل ما أديك إحساس مزيف إن الموضوع اتحرك.');
+          {% endif %}
+          truth.classList.remove('hidden');truth.classList.add('entering');
+          localStorage.removeItem(TRANSCRIPT);
+        },wait+350);
+      },wait+300);
+    },wait);
+  },reduced?20:360);
 })();
 </script>
 </body></html>

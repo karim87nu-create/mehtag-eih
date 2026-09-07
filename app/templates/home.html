@@ -2,183 +2,258 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>محتاج إيه؟</title>
+<title>معاك</title>
 <link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/chat.css">
 <link rel="manifest" href="/static/manifest.webmanifest">
 <meta name="theme-color" content="#f6f3ee">
 </head>
 <body>
-<main class="app-shell">
-  <header class="app-top">
-    <a class="brand" href="/"><span class="brand-mark">م</span><span>محتاج إيه؟</span></a>
+<main class="app-shell chat-shell">
+  <header class="app-top chat-top">
+    <a class="brand" href="/"><span class="brand-mark">م</span><span>معاك</span></a>
     <a class="top-action" href="/privacy">خصوصيتك</a>
   </header>
 
-  <section class="assistant-hero">
-    <div class="assistant-kicker"><span class="live-dot"></span><span>معاك من أول الطلب لحد ما النتيجة تتأكد</span></div>
-    <h1>قولّي محتاج إيه.</h1>
-    <p>اكتبها زي ما تقولها لحد يعرفك. أنا أفهم المطلوب، أطلب منك الناقص فقط لو لازم، وأفضل ورا الموضوع معاك.</p>
+  <section class="conversation-hero">
+    <div class="presence"><span class="live-dot"></span><span>أنا معاك</span></div>
+    <div id="chatThread" class="chat-thread"
+         data-active-title="{% if open_cases %}{{ open_cases[0].title|e }}{% endif %}">
+      <div id="introMessage" class="chat-message assistant welcome-message">
+        <div class="assistant-avatar">م</div>
+        <div class="bubble"><span class="typing-placeholder">...</span></div>
+      </div>
+    </div>
   </section>
 
-  <section class="panel composer-card" id="composer">
-    <form id="requestForm" method="post" action="/requests">
-      <textarea id="requestText" class="composer-input" name="text" placeholder="مثال: عايز غسالة كويسة في حدود 25 ألف وتوصل بكرة" required></textarea>
-      <div id="clarifyBox" class="notice hidden"></div>
-      <div class="composer-footer">
-        <button class="icon-btn" id="micBtn" type="button" aria-label="اتكلم" title="اتكلم">◉</button>
-        <button id="sendBtn" class="send-btn" type="submit">خلّصهالي</button>
+  <section class="conversation-composer" id="composer">
+    <form id="chatForm" autocomplete="off">
+      <textarea id="chatInput" rows="1" placeholder="اكتب أو اتكلم بطريقتك..." aria-label="اكتب رسالتك"></textarea>
+      <div class="composer-controls">
+        <button class="voice-button" id="micBtn" type="button" aria-label="اتكلم" title="اتكلم"><span class="mic-icon">●</span></button>
+        <button id="sendBtn" class="chat-send" type="submit" aria-label="إرسال">↑</button>
       </div>
-      <div class="helper">Enter للإرسال · Shift + Enter لسطر جديد <span id="voiceHint"></span></div>
     </form>
+    <div class="composer-hint" id="composerHint">مش لازم ترتب كلامك. أنا هسألك عن الناقص بس.</div>
   </section>
 
   {% if open_cases %}
-  <div class="section-head"><h2>أنا ورا إيه دلوقتي</h2><span>{{ open_cases|length }} مفتوح</span></div>
-  <section class="case-grid">
-    {% for c in open_cases %}
+  <section class="ambient-strip">
+    <div class="ambient-title"><b>أنا متابع معاك</b><span>{{ open_cases|length }} مفتوح</span></div>
+    <div class="ambient-list">
+      {% for c in open_cases %}
       {% if loop.index <= 3 %}
-      <a class="case-card" href="{{ c.url }}">
-        <span class="case-icon">↻</span>
-        <span class="case-copy">
-          <b>{{ c.title }}</b>
-          <small>
-            {% if c.status == "AWAITING_PAYMENT" %}محتاج قرارك
-            {% elif c.status == "CONFIRMED" %}اتأكد وبدأت المتابعة
-            {% elif c.status == "IN_PROGRESS" %}جاري التنفيذ
-            {% elif c.status == "OUT_FOR_DELIVERY" %}في الطريق
-            {% elif c.status == "COMPLETED_PENDING_CONFIRMATION" %}محتاج أتأكد منك
-            {% elif c.status == "ISSUE_OPEN" %}فيه مشكلة وأنا وراها
-            {% else %}متابعها معاك{% endif %}
-          </small>
-        </span>
-        <span class="chev">‹</span>
+      <a class="ambient-item" href="{{ c.url }}">
+        <span class="ambient-dot"></span>
+        <span><b>{{ c.title }}</b><small>
+          {% if c.status == "AWAITING_PAYMENT" %}محتاج قرارك
+          {% elif c.status == "CONFIRMED" %}اتأكد وبدأت المتابعة
+          {% elif c.status == "IN_PROGRESS" %}جاري التنفيذ
+          {% elif c.status == "OUT_FOR_DELIVERY" %}في الطريق
+          {% elif c.status == "COMPLETED_PENDING_CONFIRMATION" %}محتاج أتأكد منك
+          {% elif c.status == "ISSUE_OPEN" %}فيه مشكلة وأنا وراها
+          {% else %}متابعها معاك{% endif %}
+        </small></span>
+        <span class="ambient-arrow">‹</span>
       </a>
       {% endif %}
-    {% endfor %}
+      {% endfor %}
+    </div>
   </section>
   {% endif %}
 
   {% if followups %}
   {% set f = followups[0] %}
-  <div class="section-head"><h2>محتاج قرارك</h2><span>واحدة بس</span></div>
-  <section class="decision-card">
-    <span class="tag">متابعة</span>
+  <section class="quiet-card">
+    <span class="quiet-label">محتاج قرارك</span>
     <h3>{{ f.case.title }}</h3>
     <p>{{ f.task.action }}</p>
-    <a class="primary-btn" style="display:flex;align-items:center;justify-content:center;text-decoration:none" href="/external/{{ f.case.id }}">افتح المتابعة</a>
+    <a class="quiet-action" href="/external/{{ f.case.id }}">افتح المتابعة</a>
   </section>
   {% endif %}
 
   {% if suggestions %}
   {% set s = suggestions[0] %}
-  <div class="section-head"><h2>لقيت حاجة ممكن تفيدك</h2><span>اقتراح واحد</span></div>
-  <section class="suggestion-card">
-    <span class="tag">اقتراح ذكي</span>
+  <section class="quiet-card suggestion">
+    <span class="quiet-label">حاجة ممكن تفيدك</span>
     <h3>{{ s.followup_intent }}</h3>
     <p>{{ s.raw_text }}</p>
     <div class="inline-actions">
-      <form method="post" action="/detected/{{ s.id }}/accept"><button class="primary-btn">تابعها معايا</button></form>
-      <form method="post" action="/detected/{{ s.id }}/dismiss"><button class="secondary-btn">مش محتاج</button></form>
+      <form method="post" action="/detected/{{ s.id }}/accept"><button class="quiet-action solid">تابعها معايا</button></form>
+      <form method="post" action="/detected/{{ s.id }}/dismiss"><button class="quiet-action">مش محتاج</button></form>
     </div>
   </section>
   {% endif %}
-
-  {% if learned %}
-  {% set p = learned[0] %}
-  <div class="section-head"><h2>بدأت أفهمك</h2><span>بإذنك فقط</span></div>
-  <section class="suggestion-card">
-    <span class="tag">تفضيل محتمل</span>
-    <h3>{{ p.preference_value }}</h3>
-    <p>لاحظت ده في {{ p.evidence_count }} تعاملات. أعتمده للمرة الجاية؟</p>
-    <div class="inline-actions">
-      <form method="post" action="/preferences/{{ p.id }}/confirm"><button class="primary-btn">اعتمده</button></form>
-      <form method="post" action="/preferences/{{ p.id }}/reject"><button class="secondary-btn">لأ</button></form>
-    </div>
-  </section>
-  {% endif %}
-
-  {% if memories %}
-  <div class="section-head"><h2>حاجات خلصناها قبل كده</h2><span>فاكرها بإذنك</span></div>
-  <section class="case-grid">
-    {% for m in memories %}
-      {% if loop.index <= 2 %}
-      <div class="case-card">
-        <span class="case-icon">✓</span>
-        <span class="case-copy"><b>{{ m.value }}</b><small>نتيجة اتأكدت قبل كده</small></span>
-        <form method="post" action="/memory/{{ m.id }}/repeat"><button class="quiet-btn">كررها</button></form>
-      </div>
-      {% endif %}
-    {% endfor %}
-  </section>
-  {% endif %}
-
-  <div id="toast" class="toast"></div>
 </main>
 
 <script>
 (function(){
-  const form=document.getElementById('requestForm');
-  const input=document.getElementById('requestText');
+  const thread=document.getElementById('chatThread');
+  const intro=document.getElementById('introMessage');
+  const form=document.getElementById('chatForm');
+  const input=document.getElementById('chatInput');
   const send=document.getElementById('sendBtn');
-  const clarify=document.getElementById('clarifyBox');
   const mic=document.getElementById('micBtn');
-  const toast=document.getElementById('toast');
-  let firstText='', awaiting=false;
+  const hint=document.getElementById('composerHint');
+  const KEY='mehtag_chat_draft_v3';
+  const TRANSCRIPT='mehtag_chat_transcript_v3';
+  const AREAS=['مدينة نصر','مصر الجديدة','التجمع','القاهرة الجديدة','مدينتي','الرحاب','المعادي','الزمالك','الدقي','المهندسين','الهرم','الجيزة','شبرا','حلوان','6 أكتوبر','اكتوبر','الشيخ زايد','القاهرة'];
 
-  function showToast(msg){
-    toast.textContent=msg;toast.classList.add('show');
-    setTimeout(()=>toast.classList.remove('show'),1800);
+  function greeting(){return new Date().getHours()<12?'صباح الخير.':'مساء الخير.'}
+  const activeTitle=(thread.dataset.activeTitle||'').trim();
+  const introText=activeTitle
+    ? `${greeting()} أنا لسه متابع معاك موضوع «${activeTitle}». لو عايز نكمل فيه أو تبدأ حاجة تانية، كلّمني عادي.`
+    : `${greeting()} أنا موجود عشان أخلّص معاك اللي محتاجه، من أول الفكرة لحد ما تتأكد إن الموضوع خلص. قولّي اللي في دماغك بطريقتك، ومش لازم ترتبه.`;
+
+  let state={category:null,messages:[],condition:null,budget:null,area:null,deadline:null,awaiting:null,baseText:'',startedAt:Date.now()};
+  try{
+    const saved=JSON.parse(sessionStorage.getItem(KEY)||'null');
+    if(saved && Date.now()-(saved.startedAt||0)<45*60*1000) state=saved;
+  }catch(e){}
+
+  function save(){sessionStorage.setItem(KEY,JSON.stringify(state))}
+  function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+  function addMessage(role,text,animate=true){
+    const wrap=document.createElement('div');
+    wrap.className='chat-message '+role+(animate?' entering':'');
+    wrap.innerHTML=role==='assistant'
+      ? `<div class="assistant-avatar">م</div><div class="bubble">${esc(text)}</div>`
+      : `<div class="bubble">${esc(text)}</div>`;
+    thread.appendChild(wrap);
+    requestAnimationFrame(()=>wrap.scrollIntoView({behavior:'smooth',block:'end'}));
   }
-  function followupFor(text){
-    const t=text.trim().toLowerCase();
-    if(!t) return '';
-    if(/موتوسيكل|موتوسيكلات|سيارة|عربية|عربيات/.test(t) && !/جديد|مستعمل/.test(t)) return 'تمام. جديد ولا مستعمل؟';
-    if(/صيانة|تصليح|سباك|كهربائي|تكييف|نجار/.test(t) && !/مدينة نصر|مصر الجديدة|التجمع|القاهرة الجديدة|مدينتي|المعادي|الزمالك|الدقي|الهرم|الجيزة/.test(t)) return 'تمام. الخدمة مطلوبة في أنهي منطقة؟';
-    if(/مطعم|أكل|غدا|غداء|عشا|عشاء|دليفري|توصيل أكل/.test(t) && !/مدينة نصر|مصر الجديدة|التجمع|القاهرة الجديدة|مدينتي|المعادي|الزمالك|الدقي|الهرم|الجيزة/.test(t)) return 'تمام. التوصيل لأنهي منطقة؟';
-    return '';
+  function assistant(text,delay=280){
+    return new Promise(resolve=>{
+      const thinking=document.createElement('div');
+      thinking.className='chat-message assistant entering thinking-message';
+      thinking.innerHTML='<div class="assistant-avatar">م</div><div class="bubble"><span class="thinking-inline"><i></i><i></i><i></i></span></div>';
+      thread.appendChild(thinking);
+      thinking.scrollIntoView({behavior:'smooth',block:'end'});
+      setTimeout(()=>{
+        thinking.remove();addMessage('assistant',text);
+        state.messages.push({role:'assistant',text});save();resolve();
+      },delay);
+    });
   }
-  form.addEventListener('submit',function(e){
-    if(form.dataset.final==='1') return;
-    e.preventDefault();
-    const text=input.value.trim();
-    if(!text) return;
-    if(awaiting){
-      const answer=text;
-      input.value=firstText+' — '+answer;
-      form.dataset.final='1';
-      send.textContent='ببدأ…';send.classList.add('loading-btn');send.disabled=true;
-      setTimeout(()=>form.submit(),260);
-      return;
+  function user(text){addMessage('user',text);state.messages.push({role:'user',text});save()}
+  intro.querySelector('.bubble').textContent=introText;
+  if(state.messages.length){
+    state.messages.forEach(m=>addMessage(m.role,m.text,false));
+    hint.textContent=state.awaiting?'جاوبني على النقطة دي بس، والباقي سيبه عليّ.':'كمّل كلامك عادي.';
+  }
+
+  function normalizeDigits(s){return s.replace(/[٠-٩]/g,d=>'٠١٢٣٤٥٦٧٨٩'.indexOf(d))}
+  function parseBudget(text){
+    const n=normalizeDigits(text.replace(/,/g,''));
+    const m=n.match(/(\d+(?:\.\d+)?)\s*(ألف|الف|k)?/i);
+    if(!m)return null;
+    let v=parseFloat(m[1]);if(m[2])v*=1000;
+    if(v<1000 && /(ميزاني|حدود|لحد|حتى|سقف|حوالي)/.test(text) && v<200)v*=1000;
+    return isFinite(v)?v:null;
+  }
+  function parseArea(text){return AREAS.find(a=>text.includes(a))||null}
+  function parseDeadline(text){return ['النهاردة','اليوم','بكرة','غدا','غداً','غدًا'].find(x=>text.includes(x))||null}
+  function detectCategory(text){
+    if(/موتوسيكل|موتوسيكلات|موتسيكل|سكوتر|عربية|عربيات|سيارة|سيارات/.test(text))return'vehicle';
+    if(/سباك|كهربائي|نجار|صيانة|تصليح|تكييف|نقاش|فني|تنظيف|نقل عفش/.test(text))return'service';
+    if(/مطعم|أكل|اكل|غدا|غداء|عشا|عشاء|بيتزا|برجر|كشري|مشويات|دليفري/.test(text))return'food';
+    if(/غسالة|ثلاجة|تليفزيون|شاشة|موبايل|تليفون|لاب توب|لابتوب|كمبيوتر|تكييف/.test(text))return'product';
+    if(/حجز|فندق|طيران|تذكرة|رحلة|سفر/.test(text))return'booking';
+    return'general';
+  }
+  function parseIntoState(text){
+    if(!state.category)state.category=detectCategory(text);
+    const low=text.trim().toLowerCase();
+    if(/جديد|زيرو/.test(low))state.condition='جديد';
+    if(/مستعمل|استعمال/.test(low))state.condition='مستعمل';
+    const b=parseBudget(text);
+    if(b&&(state.awaiting==='budget'||/(ميزاني|حدود|لحد|حتى|سقف|حوالي|ألف|الف|k)/i.test(text)))state.budget=b;
+    const a=parseArea(text);if(a)state.area=a;
+    const d=parseDeadline(text);if(d)state.deadline=d;
+  }
+  function noConstraint(text){return /^(ابدأ|ابدأ كده|ابدأ انت|مفيش|مش فارقة|مش فارقه|أي حاجة|اي حاجه|الأفضل|الافضل|دور|شوف انت|مش محدد|من غير)$/i.test(text.trim())}
+  function money(v){return new Intl.NumberFormat('ar-EG',{maximumFractionDigits:0}).format(v)+' جنيه'}
+
+  function nextStep(){
+    const cat=state.category||'general';
+    if(cat==='vehicle'){
+      if(!state.condition)return{key:'condition',text:'تمام. أقدر أساعدك نلاقي اختيار مناسب، بس محتاج أعرف الأول: عايزه جديد ولا مستعمل؟'};
+      if(!state.budget&&!state.skipBudget)return{key:'budget',text:`تمام، ${state.condition}. عندك ميزانية تقريبية عايزني ما أتخطاهاش؟ ولو مش محدد قولّي ابدأ من أفضل قيمة.`};
+      if(!state.area)return{key:'area',text:`حلو${state.budget?'، هخلي السقف حوالي '+money(state.budget):''}. هتستلمه أو تدور عليه في أنهي منطقة؟`};
+      return{key:'ready',text:`تمام، كده الصورة وضحت عندي. هبدأ أدورلك على الأنسب${state.budget?' في حدود '+money(state.budget):''} حوالين ${state.area}، ومش هقولك إن فيه عرض إلا لما يوصل عرض فعلي.`};
     }
-    const q=followupFor(text);
-    if(q){
-      firstText=text;awaiting=true;
-      clarify.textContent=q;clarify.classList.remove('hidden');
-      input.value='';input.placeholder='اكتب الإجابة هنا';
-      input.focus();send.textContent='كمّل';
-      return;
+    if(cat==='service'){
+      if(!state.area)return{key:'area',text:'تمام. أقدر أرتبلك الخدمة، بس محتاج أعرف مكانها في أنهي منطقة؟'};
+      return{key:'ready',text:`تمام، عرفت المطلوب والمكان. هبدأ أدور على جهة مناسبة في ${state.area} وأرجعلك باللي يستاهل.`};
     }
-    form.dataset.final='1';
-    send.textContent='بفهم طلبك';send.classList.add('loading-btn');send.disabled=true;
-    setTimeout(()=>form.submit(),260);
-  });
-  input.addEventListener('keydown',function(e){
-    if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();form.requestSubmit()}
-  });
+    if(cat==='food'){
+      if(!state.area)return{key:'area',text:'تمام. التوصيل لأنهي منطقة؟'};
+      return{key:'ready',text:`تمام، هبدأ أشوف الأنسب للطلب ده ويوصل لـ ${state.area}.`};
+    }
+    if(cat==='product'){
+      if(!state.budget&&!state.skipBudget)return{key:'budget',text:'تمام. عندك ميزانية تقريبية عايزني ألتزم بيها؟ ولو مش محدد قولّي ابدأ من أفضل قيمة.'};
+      if(/توصيل|يوصل|وصّل|وصل/.test(state.baseText)&&!state.area)return{key:'area',text:'تمام. التوصيل لأنهي منطقة؟'};
+      return{key:'ready',text:`تمام، فهمت اللي بتدور عليه${state.budget?' والميزانية حوالي '+money(state.budget):''}. هبدأ أشوف الأنسب بدل ما أرمي قدامك اختيارات وخلاص.`};
+    }
+    if(cat==='booking'){
+      if(!state.deadline)return{key:'deadline',text:'تمام. الحجز أو السفر إمتى تقريبًا؟'};
+      return{key:'ready',text:'تمام، كده عندي بداية واضحة. هبدأ أدور على الأنسب للميعاد ده وأرتبلك الاختيارات.'};
+    }
+    if(!state.confirmedGeneral)return{key:'general',text:'تمام، فهمت الفكرة. فيه شرط واحد أساسي لازم ما أتجاوزهش—ميزانية، مكان، أو ميعاد؟ ولو مفيش قولّي ابدأ.'};
+    return{key:'ready',text:'تمام، كده عندي اللي يكفيني أبدأ. هدوّر على نتيجة مفيدة فعلًا، ومش هفترض إن حاجة حصلت قبل ما تحصل.'};
+  }
+
+  function combineRequest(){return state.messages.filter(m=>m.role==='user').map(m=>m.text).join(' — ')}
+
+  async function handle(text){
+    text=(text||'').trim();if(!text||send.disabled)return;
+    user(text);if(!state.baseText)state.baseText=text;
+    if(state.awaiting==='budget'&&noConstraint(text))state.skipBudget=true;
+    if(state.awaiting==='general'){
+      if(noConstraint(text))state.confirmedGeneral=true;
+      else{
+        const b=parseBudget(text);if(b)state.budget=b;
+        const a=parseArea(text);if(a)state.area=a;
+        const d=parseDeadline(text);if(d)state.deadline=d;
+        state.confirmedGeneral=true;
+      }
+    }else parseIntoState(text);
+
+    const step=nextStep();
+    state.awaiting=step.key==='ready'?null:step.key;save();
+    input.value='';autoSize();
+    hint.textContent=step.key==='ready'?'هبدأ التنفيذ على الكلام اللي اتفقنا عليه.':'جاوبني على النقطة دي بس، والباقي سيبه عليّ.';
+    await assistant(step.text,step.key==='ready'?360:260);
+
+    if(step.key==='ready'){
+      send.disabled=true;mic.disabled=true;
+      const payload={messages:state.messages,finalText:combineRequest(),createdAt:Date.now()};
+      localStorage.setItem(TRANSCRIPT,JSON.stringify(payload));sessionStorage.removeItem(KEY);
+      setTimeout(()=>{
+        const f=document.createElement('form');f.method='post';f.action='/requests';
+        const x=document.createElement('input');x.type='hidden';x.name='text';x.value=payload.finalText;
+        f.appendChild(x);document.body.appendChild(f);f.submit();
+      },900);
+    }
+  }
+
+  form.addEventListener('submit',e=>{e.preventDefault();handle(input.value)});
+  input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();handle(input.value)}});
+  function autoSize(){input.style.height='auto';input.style.height=Math.min(input.scrollHeight,128)+'px'}
+  input.addEventListener('input',autoSize);
 
   const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(SpeechRecognition){
-    mic.addEventListener('click',function(){
+    let active=false;
+    mic.addEventListener('click',()=>{
+      if(active)return;
       const r=new SpeechRecognition();r.lang='ar-EG';r.interimResults=false;r.maxAlternatives=1;
-      mic.textContent='●';showToast('بتسمعك…');
-      r.onresult=(ev)=>{input.value=(input.value+' '+ev.results[0][0].transcript).trim();input.focus()};
-      r.onerror=()=>showToast('الصوت مش متاح دلوقتي');
-      r.onend=()=>{mic.textContent='◉'};
-      r.start();
+      active=true;mic.classList.add('listening');hint.textContent='سامعك… اتكلم عادي.';
+      r.onresult=ev=>{const said=ev.results[0][0].transcript.trim();input.value=said;autoSize();setTimeout(()=>handle(said),220)};
+      r.onerror=()=>{hint.textContent='الصوت مش متاح دلوقتي، اكتبلي عادي.'};
+      r.onend=()=>{active=false;mic.classList.remove('listening')};r.start();
     });
-  }else{
-    mic.style.display='none';
-  }
+  }else mic.style.display='none';
 })();
 </script>
 </body></html>
