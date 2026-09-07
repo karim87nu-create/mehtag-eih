@@ -297,7 +297,7 @@ async def create_request(text: str = Form(...), request: FastAPIRequest = None, 
     if applied_preferences:
         log_event(db, row.id, "CONFIRMED_PREFERENCES_APPLIED", " | ".join(applied_preferences))
 
-    discovered = await discover_businesses(text)
+    discovered = await discover_businesses(text, parsed.get("area"))
     log_event(db, row.id, "DISCOVERY_DONE", str(len(discovered)))
 
     links, reachable = [], 0
