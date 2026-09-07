@@ -300,7 +300,13 @@ async def create_request(text: str = Form(...), request: FastAPIRequest = None, 
     discovered = await discover_businesses(text, parsed.get("area"))
     log_event(db, row.id, "DISCOVERY_DONE", str(len(discovered)))
 
-    links, reachable = [], 0
+    # Discovery is not outreach. Keep the internal state honest:
+    # finding a business/website never means the merchant received the request.
+    links = []
+    discovered_count = len(discovered)
+    sent_count = 0
+    queued_count = 0
+
     for b in discovered:
         biz = db.query(Business).filter(Business.external_id == b.get("external_id")).first() if b.get("external_id") else None
         if not biz:
@@ -311,21 +317,40 @@ async def create_request(text: str = Form(...), request: FastAPIRequest = None, 
         reach = build_reachability(b)
         log_event(db, row.id, "REACHABILITY_CHECK",
                   f"{biz.name}|reachable={reach['reachable']}|channel={reach.get('channel')}")
+
+        # Keep a private response link available for configured/test transports,
+        # but do not expose its existence as proof of contact.
         if reach["reachable"]:
-            reachable += 1
             token = new_token()
             link = MerchantLink(token=token, request_id=row.id, business_id=biz.id, status="CREATED")
             db.add(link); db.commit()
             links.append((biz.name, token))
-            log_event(db, row.id, "MERCHANT_LINK_CREATED", biz.name)
+            log_event(db, row.id, "MERCHANT_LINK_CREATED_INTERNAL", biz.name)
 
-    row.status = "WAITING_OFFERS" if reachable else "NO_REACHABLE_SUPPLY"
-    db.commit()
-    if not reachable:
+        attempt = route_request_to_business(db, row, biz)
+        if attempt.status in ("SENT", "PENDING"):
+            delivery = deliver_request(db, attempt)
+            if delivery.status == "SENT":
+                sent_count += 1
+                log_event(db, row.id, "OUTREACH_SENT_CONFIRMED", biz.name)
+            elif delivery.status == "QUEUED":
+                queued_count += 1
+                log_event(db, row.id, "OUTREACH_QUEUED", biz.name)
+
+    if sent_count:
+        row.status = "WAITING_OFFERS"
+        log_event(db, row.id, "WAITING_FOR_REAL_OFFERS", f"sent={sent_count}")
+    elif discovered_count:
+        row.status = "SUPPLY_FOUND_NO_CHANNEL"
+        log_event(db, row.id, "OUTREACH_NOT_CONFIRMED",
+                  f"found={discovered_count};queued={queued_count};sent=0")
+    else:
+        row.status = "NO_REACHABLE_SUPPLY"
         log_event(db, row.id, "REQUEST_FAILED", "NO_REACHABLE_SUPPLY")
+    db.commit()
 
     return templates.TemplateResponse("request_result.html",
-        {"request": request, "row": row, "reachable_count": reachable, "links": links, "applied_preferences": applied_preferences})
+        {"request": request, "row": row, "reachable_count": discovered_count, "links": links, "applied_preferences": applied_preferences})
 
 @app.get("/r/{token}", response_class=HTMLResponse)
 def merchant_page(token: str, request: FastAPIRequest, db: Session = Depends(get_db)):

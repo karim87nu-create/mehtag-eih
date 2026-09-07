@@ -2,65 +2,96 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>طلبك</title><link rel="stylesheet" href="/static/app.css">
+<title>طلبك شغال</title>
+<link rel="stylesheet" href="/static/app.css">
+<meta name="theme-color" content="#f6f3ee">
 </head>
 <body>
-<main class="app">
-  <div class="top"><a class="brand" href="/">محتاج إيه؟</a><a class="small" href="/">الرئيسية</a></div>
-  <div class="user-bubble">{{ row.raw_text }}</div>
+<main class="app-shell narrow">
+  <header class="app-top">
+    <a class="brand" href="/"><span class="brand-mark">م</span><span>محتاج إيه؟</span></a>
+    <a class="top-action" href="/">طلب جديد</a>
+  </header>
 
-  <section class="stage-shell">
-    <div class="scene active" id="scene1">
-      <div class="visual"><div class="dots"><i></i><i></i><i></i></div></div>
-      <h1>بفهم طلبك…</h1>
-      <p class="muted">بفك الكلام للتفاصيل المهمة من غير ما أعقدها عليك.</p>
+  <section class="thread">
+    <div class="message user">{{ row.raw_text }}</div>
+
+    <div class="message assistant stage-card">
+      <div class="stage active" id="s1">
+        <div class="stage-visual"><div class="thinking-dots"><i></i><i></i><i></i></div></div>
+        <h2>بفهم اللي محتاجه…</h2>
+        <p>بطلع القيود المهمة من كلامك من غير ما أحول الموضوع لاستمارة.</p>
+      </div>
+
+      <div class="stage" id="s2">
+        <div class="stage-visual"><div class="checkmark">✓</div></div>
+        <h2>تمام، الطلب واضح.</h2>
+        <p>دلوقتي بفحص السوق والجهات اللي ممكن تكون مناسبة فعلًا.</p>
+      </div>
+
+      <div class="stage" id="s3">
+        <div class="stage-visual"><div class="orbit"></div></div>
+        <h2>بفحص الجهات المتاحة…</h2>
+        <p>دي مرحلة اكتشاف فقط. مش هقولك إن حد استلم الطلب أو قدّم عرض إلا لما ده يحصل فعلًا.</p>
+        <div class="scanline"><span></span></div>
+      </div>
+
+      <div class="stage" id="s4">
+        <div class="stage-visual"><div class="checkmark">✓</div></div>
+        {% if reachable_count > 0 %}
+          <h2>لقيت {{ reachable_count }} جهة محتملة.</h2>
+          <p>الجهات دي مرتبطة بطلبك، لكن ده <b>مش معناه إنهم استلموا الطلب</b>. هعرضلك عرض بس لما يوصل عرض فعلي.</p>
+          <div class="truth-note">النسخة الحالية تكتشف جهات حقيقية، لكن قناة التواصل التلقائي مع أي تاجر جديد لسه تحت الربط.</div>
+        {% else %}
+          <h2>لسه مفيش جهة مناسبة مؤكدة.</h2>
+          <p>الطلب متسجل، ومش هنمثل إن فيه عرض أو منفذ طالما ده ما حصلش.</p>
+        {% endif %}
+        <a class="live-link" href="/requests/{{ row.id }}">افتح المتابعة الحية</a>
+      </div>
     </div>
 
-    <div class="scene" id="scene2">
-      <div class="visual"><div class="check">✓</div></div>
-      <h1>تمام، فهمتك.</h1>
-      <p class="muted">دلوقتي براجع الجهات اللي ممكن تكون مناسبة فعلاً.</p>
+    {% if applied_preferences %}
+    <div class="message assistant">
+      <div class="assistant-line">
+        <span class="mini-orb"></span>
+        <div class="assistant-content">
+          <b>واخد في اعتباري اللي أنت معتمده قبل كده</b>
+          {% for p in applied_preferences %}<p>• {{ p }}</p>{% endfor %}
+        </div>
+      </div>
     </div>
-
-    <div class="scene" id="scene3">
-      <div class="visual"><div class="search-orbit"></div></div>
-      <h1>بدور…</h1>
-      <p class="muted">بفحص جهات حقيقية مرتبطة بطلبك والمنطقة.</p>
-      <div class="progress"><span></span></div>
-      <div class="inline-note">مش هقولك إن فيه عرض إلا لما يبقى فيه عرض فعلي مؤكد.</div>
-    </div>
-
-    <div class="scene" id="scene4">
-      <div class="visual"><div class="check">✓</div></div>
-      {% if reachable_count > 0 %}
-      <h1>لقيت جهات محتملة.</h1>
-      <p class="muted">لقيت {{ reachable_count }} جهة مرتبطة بطلبك. لسه مستني العرض المؤكد قبل ما أقولك لقيتلك الأنسب.</p>
-      {% else %}
-      <h1>لسه بدور.</h1>
-      <p class="muted">مفيش جهة مناسبة مؤكدة لحد دلوقتي، والطلب لسه مفتوح.</p>
-      {% endif %}
-      <a class="full-link" href="/requests/{{ row.id }}">شوف حالة الطلب</a>
-    </div>
+    {% endif %}
   </section>
 
-  {% if applied_preferences %}
-  <div class="card"><b>واخد في اعتباري</b><p class="muted">{% for p in applied_preferences %}{{ p }}{% if not loop.last %}<br>{% endif %}{% endfor %}</p></div>
-  {% endif %}
+  <div class="bottom-composer">
+    <form action="/requests" method="post">
+      <textarea name="text" placeholder="ضيف تفصيلة أو اطلب حاجة تانية"></textarea>
+      <button class="send-circle" aria-label="إرسال">↑</button>
+    </form>
+  </div>
 </main>
 
 <script>
 (function(){
-  const scenes=[...document.querySelectorAll(".scene")];
-  if(window.matchMedia("(prefers-reduced-motion: reduce)").matches){
-    scenes.forEach(x=>x.classList.remove("active"));scenes[scenes.length-1].classList.add("active");return;
-  }
-  let i=0;const delays=[1050,900,2100];
+  const stages=[...document.querySelectorAll('.stage')];
+  const reduced=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(reduced){stages.forEach(x=>x.classList.remove('active'));stages.at(-1).classList.add('active');return}
+  const delays=[900,820,1800];let i=0;
   function next(){
-    if(i>=scenes.length-1)return;
-    scenes[i].classList.remove("active");i++;scenes[i].classList.add("active");
-    if(i<scenes.length-1)setTimeout(next,delays[i]||1100);
+    if(i>=stages.length-1)return;
+    stages[i].classList.remove('active');i++;stages[i].classList.add('active');
+    if(i<stages.length-1)setTimeout(next,delays[i]||900);
   }
   setTimeout(next,delays[0]);
+
+  const statusUrl='/requests/{{ row.id }}';
+  function poll(){
+    fetch(statusUrl,{headers:{'X-Requested-With':'fetch'}})
+      .then(r=>r.text())
+      .then(html=>{if(html.includes('data-has-offer="1"')) location.href=statusUrl})
+      .catch(()=>{});
+  }
+  setInterval(poll,6000);
 })();
 </script>
 </body></html>

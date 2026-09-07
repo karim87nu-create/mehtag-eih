@@ -1,26 +1,53 @@
 <!doctype html>
-<html lang="ar" dir="rtl"><head>
+<html lang="ar" dir="rtl">
+<head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>تأكيد التنفيذ</title><link rel="stylesheet" href="/static/app.css">
-</head><body>
-<main class="app">
-  <div class="top"><a class="brand" href="/">محتاج إيه؟</a><a class="small" href="/requests/{{ req.id }}">رجوع</a></div>
-  <section class="offer-card">
-    <div class="eyebrow"><span class="eyebrow-dot"></span> خطوة أخيرة قبل التنفيذ</div>
-    <h1>راجع واختار.</h1>
-    <p class="muted">{{ req.raw_text }}</p>
-    <div class="price">{{ "%.0f"|format(offer.price) }} ج</div>
-    <div class="meta-box"><span>موعد التنفيذ</span><b>{{ offer.eta }}</b></div>
-    <div class="inline-note">الدفع هنا ما زال محاكاة في النسخة التجريبية. مفيش فلوس حقيقية هتتحرك.</div>
-    <form id="confirmForm" method="post" action="/cases/{{ case.id }}/demo-payment">
-      <button id="confirmBtn" class="primary" style="width:100%;margin-top:18px">تأكيد تجريبي</button>
-    </form>
+<title>راجع التنفيذ</title>
+<link rel="stylesheet" href="/static/app.css">
+<meta name="theme-color" content="#f6f3ee">
+</head>
+<body>
+<main class="app-shell narrow">
+  <header class="app-top">
+    <a class="brand" href="/"><span class="brand-mark">م</span><span>محتاج إيه؟</span></a>
+    <a class="top-action" href="/requests/{{ req.id }}">رجوع</a>
+  </header>
+
+  <section class="thread">
+    <div class="message user">{{ req.raw_text }}</div>
+    <div class="message assistant">
+      <div class="assistant-line">
+        <span class="mini-orb"></span>
+        <div class="assistant-content">
+          <b>الاختيار اتحدد. قبل التنفيذ، دي الصورة كاملة.</b>
+          <p>هفضل مع نفس الموضوع بعد التأكيد؛ مش هتبدأ من الصفر لو حصل تعديل أو مشكلة.</p>
+        </div>
+      </div>
+    </div>
+
+    <section class="offer">
+      <div class="offer-top">
+        <div class="offer-eyebrow"><span class="live-dot"></span><span>جاهز للتأكيد</span></div>
+        <h1>راجع واختار</h1>
+        <div class="price">{{ "%.0f"|format(offer.price) }} <small>جنيه</small></div>
+        <div class="offer-grid">
+          <div class="metric"><span>موعد التنفيذ</span><b>{{ offer.eta }}</b></div>
+          <div class="metric"><span>حالة المتابعة</span><b>هتفضل مفتوحة لحد تأكيد النتيجة</b></div>
+        </div>
+      </div>
+      <div class="offer-action">
+        <div class="notice warning">الدفع في النسخة الحالية محاكاة فقط. لا توجد أموال حقيقية تتحرك من الشاشة دي.</div>
+        <form id="confirmForm" method="post" action="/cases/{{ case.id }}/demo-payment" style="margin-top:12px">
+          <button id="confirmBtn" class="primary-btn" style="width:100%">تأكيد تجريبي وابدأ المتابعة</button>
+        </form>
+      </div>
+    </section>
   </section>
 </main>
 <script>
 (function(){
- const f=document.getElementById("confirmForm"),b=document.getElementById("confirmBtn");
- if(f&&b)f.addEventListener("submit",()=>{b.classList.add("loading");b.disabled=true;b.textContent="بأكد…"});
+  const f=document.getElementById('confirmForm'),b=document.getElementById('confirmBtn');
+  if(f&&b)f.addEventListener('submit',()=>{b.classList.add('loading-btn');b.disabled=true;b.textContent='بأكد…'});
 })();
 </script>
 </body></html>

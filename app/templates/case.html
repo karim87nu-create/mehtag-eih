@@ -1,85 +1,108 @@
 <!doctype html>
-<html lang="ar" dir="rtl"><head>
+<html lang="ar" dir="rtl">
+<head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>متابعها معاك</title><link rel="stylesheet" href="/static/app.css">
-</head><body>
-<main class="app">
-  <div class="top"><a class="brand" href="/">محتاج إيه؟</a><a class="small" href="/">الرئيسية</a></div>
-  <section class="offer-card">
-    <div class="eyebrow"><span class="eyebrow-dot"></span> أنا وراها معاك</div>
-    <h1>متابع التنفيذ.</h1>
-    <p class="muted">{{ req.raw_text }}</p>
+<title>أنا وراها معاك</title>
+<link rel="stylesheet" href="/static/app.css">
+<meta name="theme-color" content="#f6f3ee">
+</head>
+<body>
+<main class="app-shell narrow">
+  <header class="app-top">
+    <a class="brand" href="/"><span class="brand-mark">م</span><span>محتاج إيه؟</span></a>
+    <a class="top-action" href="/">الرئيسية</a>
+  </header>
 
-    <div class="case-status">
-      <b>{{ case.status }}</b><br>
-      <span class="muted">المتوقع: {{ case.expected_at or "—" }}</span>
+  <section class="thread">
+    <div class="message user">{{ req.raw_text }}</div>
+
+    <div class="message assistant">
+      <div class="assistant-line">
+        <span class="mini-orb"></span>
+        <div class="assistant-content">
+          {% if case.status == "AWAITING_PAYMENT" %}
+            <b>مستني التأكيد قبل ما التنفيذ يبدأ.</b><p>لسه مفيش تنفيذ حقيقي حصل.</p>
+          {% elif case.status == "CONFIRMED" %}
+            <b>اتأكدت العملية، وأنا وراها معاك.</b><p>المتابعة هتفضل مفتوحة لحد ما تقول إن النتيجة تمت فعلًا.</p>
+          {% elif case.status == "IN_PROGRESS" %}
+            <b>التنفيذ شغال.</b><p>هفضل متابع أي تحديث أو تغيير في الاتفاق.</p>
+          {% elif case.status == "OUT_FOR_DELIVERY" %}
+            <b>الطلب في الطريق.</b><p>لسه العملية مش مقفولة؛ هنقفلها بعد تأكيدك أنت.</p>
+          {% elif case.status == "COMPLETED_PENDING_CONFIRMATION" %}
+            <b>المنفذ بيقول إن التنفيذ خلص.</b><p>المهم عندي دلوقتي: هل النتيجة عندك أنت تمام؟</p>
+          {% elif case.status == "VERIFIED_OUTCOME" %}
+            <b>تمام. النتيجة اتأكدت.</b><p>كده العملية اتقفلت فعلًا.</p>
+          {% elif case.status in ["ISSUE_OPEN","RESOLVED_PENDING_CONFIRMATION"] %}
+            <b>المشكلة جزء من نفس الموضوع.</b><p>مش هنعاملك كأنها طلب جديد؛ هنفضل وراها لحد ما تتحل.</p>
+          {% else %}
+            <b>متابعها معاك.</b><p>كل التطورات في نفس الخيط.</p>
+          {% endif %}
+        </div>
+      </div>
     </div>
+
+    <section class="sheet">
+      <h2>رحلة التنفيذ</h2>
+      <div class="timeline">
+        <div class="timeline-item done"><div class="timeline-dot">✓</div><div class="timeline-copy"><b>الطلب اتسجل</b><small>بدأنا من احتياجك، مش من كتالوج.</small></div></div>
+        <div class="timeline-item {% if case.status not in ["AWAITING_PAYMENT"] %}done{% endif %}"><div class="timeline-dot">{% if case.status not in ["AWAITING_PAYMENT"] %}✓{% else %}•{% endif %}</div><div class="timeline-copy"><b>التأكيد</b><small>{% if case.status == "AWAITING_PAYMENT" %}مستني قرارك{% else %}تم التأكيد{% endif %}</small></div></div>
+        <div class="timeline-item {% if case.status in ["IN_PROGRESS","OUT_FOR_DELIVERY","COMPLETED_PENDING_CONFIRMATION","VERIFIED_OUTCOME","ISSUE_OPEN","RESOLVED_PENDING_CONFIRMATION"] %}done{% endif %}"><div class="timeline-dot">•</div><div class="timeline-copy"><b>التنفيذ</b><small>المتوقع: {{ case.expected_at or "—" }}</small></div></div>
+        <div class="timeline-item {% if case.status == "VERIFIED_OUTCOME" %}done{% endif %}"><div class="timeline-dot">{% if case.status == "VERIFIED_OUTCOME" %}✓{% else %}•{% endif %}</div><div class="timeline-copy"><b>تأكيد النتيجة</b><small>العملية لا تعتبر منتهية قبل تأكيدك.</small></div></div>
+      </div>
+    </section>
 
     {% if amendment %}
-    <div class="inline-note">
-      <b>المنفذ طالب تعديل الاتفاق</b>
+    <section class="sheet">
+      <h2>فيه تغيير محتاج قرارك</h2>
       <p>{{ amendment.reason }}</p>
-      {% if amendment.new_price %}<p>السعر الجديد: {{ amendment.new_price }} ج</p>{% endif %}
-      {% if amendment.new_eta %}<p>الموعد الجديد: {{ amendment.new_eta }}</p>{% endif %}
-      <form method="post" action="/amendments/{{ amendment.id }}/decision" class="stack">
-        <button class="primary" name="decision" value="approve">موافق</button>
-        <button class="secondary" name="decision" value="reject">مش موافق</button>
+      {% if amendment.new_price %}<div class="metric"><span>السعر الجديد</span><b>{{ amendment.new_price }} ج</b></div>{% endif %}
+      {% if amendment.new_eta %}<div class="metric" style="margin-top:8px"><span>الموعد الجديد</span><b>{{ amendment.new_eta }}</b></div>{% endif %}
+      <form method="post" action="/amendments/{{ amendment.id }}/decision" class="stack" style="margin-top:12px">
+        <button class="primary-btn" name="decision" value="approve">موافق على التعديل</button>
+        <button class="secondary-btn" name="decision" value="reject">مش موافق</button>
       </form>
-    </div>
+    </section>
     {% endif %}
 
     {% if case.status == "COMPLETED_PENDING_CONFIRMATION" %}
-    <h2>اتنفذت زي ما اتفقنا؟</h2>
-    <form method="post" action="/cases/{{ case.id }}/outcome" class="stack">
-      <button class="primary" name="result" value="ok">نعم، تمام</button>
-      <button class="secondary" name="result" value="issue">فيه مشكلة</button>
-    </form>
-    <form method="post" action="/cases/{{ case.id }}/issue" class="issue-block stack">
-      <textarea name="issue_text" placeholder="قولّي المشكلة باختصار" required></textarea>
-      <button class="primary">سجل المشكلة وخليك وراها</button>
-    </form>
+    <section class="sheet">
+      <h2>وصلت للنتيجة اللي اتفقنا عليها؟</h2>
+      <p>إجابة واحدة منك هي اللي تقفل العملية أو تفتح حل المشكلة.</p>
+      <form method="post" action="/cases/{{ case.id }}/outcome" class="stack">
+        <button class="primary-btn" name="result" value="ok">أيوه، تمام</button>
+        <button class="secondary-btn" name="result" value="issue">لأ، فيه مشكلة</button>
+      </form>
+      <form method="post" action="/cases/{{ case.id }}/issue" class="stack" style="margin-top:12px">
+        <textarea class="textarea" name="issue_text" placeholder="قولّي المشكلة باختصار" required></textarea>
+        <button class="secondary-btn">سجل المشكلة وخليك وراها</button>
+      </form>
+    </section>
     {% elif case.status == "VERIFIED_OUTCOME" %}
-    <div class="inline-note"><b>✓ النتيجة اتأكدت واتقفلت.</b></div>
+    <div class="notice success">✓ النتيجة اتأكدت منك، وكده العملية اتقفلت فعلًا.</div>
     {% elif case.status in ["ISSUE_OPEN","RESOLVED_PENDING_CONFIRMATION"] %}
-    <div class="inline-note"><b>المشكلة لسه جزء من نفس العملية.</b></div>
+    <div class="notice warning">فيه مشكلة مفتوحة، ولسه جزء من نفس العملية.</div>
     {% endif %}
 
     {% for i in issues %}
-    <div class="issue-block">
-      <b>المشكلة:</b> {{ i.issue_text }}<br><span class="muted">{{ i.status }}</span>
-      {% if i.resolution_text %}<p><b>الحل المقترح:</b> {{ i.resolution_text }}</p>{% endif %}
-      {% if i.status == "OPEN" %}
-      <form method="post" action="/issues/{{ i.id }}/resolve" class="stack">
-        <textarea name="resolution_text" placeholder="محاكاة رد/حل المنفذ" required></textarea>
-        <button class="primary">تسجيل حل مقترح</button>
-      </form>
-      {% elif i.status == "RESOLVED_PENDING_CONFIRMATION" %}
-      <form method="post" action="/issues/{{ i.id }}/confirm" class="stack">
-        <button class="primary" name="result" value="ok">اتحلت فعلًا</button>
-        <button class="secondary" name="result" value="no">لسه</button>
+    <section class="sheet">
+      <h2>المشكلة</h2>
+      <p>{{ i.issue_text }}</p>
+      {% if i.resolution_text %}<div class="notice"><b>الحل المقترح:</b> {{ i.resolution_text }}</div>{% endif %}
+      {% if i.status == "RESOLVED_PENDING_CONFIRMATION" %}
+      <form method="post" action="/issues/{{ i.id }}/confirm" class="stack" style="margin-top:12px">
+        <button class="primary-btn" name="result" value="ok">اتحلت فعلًا</button>
+        <button class="secondary-btn" name="result" value="no">لسه</button>
       </form>
       {% endif %}
-    </div>
+    </section>
     {% endfor %}
-
-    <div class="dev">
-      <b>محاكاة مراحل التنفيذ — Prototype</b>
-      <form method="post" action="/cases/{{ case.id }}/event" class="stack" style="margin-top:10px">
-        <button class="secondary" name="event_type" value="IN_PROGRESS">بدأ التنفيذ</button>
-        <button class="secondary" name="event_type" value="OUT_FOR_DELIVERY">خرج للتوصيل</button>
-        <button class="secondary" name="event_type" value="COMPLETED">تم التنفيذ</button>
-        <button class="secondary" name="event_type" value="ISSUE">مشكلة</button>
-      </form>
-      {% if offer %}
-      <h2>محاكاة طلب تغيير من المنفذ</h2>
-      <form method="post" action="/offers/{{ offer.id }}/amend" class="stack">
-        <input type="number" step="0.01" name="new_price" placeholder="سعر جديد — اختياري">
-        <input name="new_eta" placeholder="موعد جديد — اختياري">
-        <textarea name="reason" placeholder="سبب التغيير" required></textarea>
-        <button class="secondary">إرسال التعديل للعميل</button>
-      </form>
-      {% endif %}
-    </div>
   </section>
+
+  <div class="bottom-composer">
+    <form action="/requests" method="post">
+      <textarea name="text" placeholder="قولّي لو فيه حاجة جديدة"></textarea>
+      <button class="send-circle" aria-label="إرسال">↑</button>
+    </form>
+  </div>
 </main>
 </body></html>

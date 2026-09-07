@@ -2,54 +2,110 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>حالة طلبك</title><link rel="stylesheet" href="/static/app.css">
+<title>متابعة الطلب</title>
+<link rel="stylesheet" href="/static/app.css">
+<meta name="theme-color" content="#f6f3ee">
 </head>
 <body>
-<main class="app">
-  <div class="top"><a class="brand" href="/">محتاج إيه؟</a><a class="small" href="/">الرئيسية</a></div>
-  <div class="user-bubble">{{ req.raw_text }}</div>
+<main class="app-shell narrow" data-has-offer="{% if best %}1{% else %}0{% endif %}">
+  <header class="app-top">
+    <a class="brand" href="/"><span class="brand-mark">م</span><span>محتاج إيه؟</span></a>
+    <a class="top-action" href="/">الرئيسية</a>
+  </header>
 
-  {% if best %}
-  <section class="offer-card">
-    <div class="eyebrow"><span class="eyebrow-dot"></span> اختيار مطابق أكتر لطلبك</div>
-    <h1>لقيتلك الأنسب</h1>
-    <div class="price">{{ "%.0f"|format(best.price) }} ج</div>
+  <section class="thread">
+    <div class="message user">{{ req.raw_text }}</div>
 
-    <div class="meta-grid">
-      <div class="meta-box"><span>موعد التنفيذ</span><b>{{ best.eta }}</b></div>
-      <div class="meta-box"><span>المنفذ</span><b>{{ best_biz.name }}</b></div>
+    {% if best %}
+    <div class="message assistant">
+      <div class="assistant-line">
+        <span class="mini-orb"></span>
+        <div class="assistant-content">
+          <b>وصل عرض فعلي. قارنت المتاح وده الأنسب حاليًا.</b>
+          <p>مش بختار الأرخص وخلاص؛ الاختيار مبني على مطابقة طلبك وسجل التنفيذ المتاح.</p>
+        </div>
+      </div>
     </div>
 
-    {% if best_reasons %}
-    <div class="why"><b>ليه اخترته؟</b>{% for reason in best_reasons %}<div>• {{ reason }}</div>{% endfor %}</div>
+    <section class="offer">
+      <div class="offer-top">
+        <div class="offer-eyebrow"><span class="live-dot"></span><span>عرض فعلي جاهز لقرارك</span></div>
+        <h1>لقيتلك الأنسب</h1>
+        <div class="price">{{ "%.0f"|format(best.price) }} <small>جنيه</small></div>
+
+        <div class="offer-grid">
+          <div class="metric"><span>موعد التنفيذ</span><b>{{ best.eta }}</b></div>
+          <div class="metric"><span>المنفذ</span><b>{{ best_biz.name }}</b></div>
+        </div>
+
+        {% if best_reasons %}
+        <div class="reason-box">
+          <b>ليه الاختيار ده؟</b>
+          <div class="reason-list">
+            {% for reason in best_reasons %}<div class="reason">{{ reason }}</div>{% endfor %}
+          </div>
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="fee-box">
+        <div class="fee-row"><span>التنفيذ</span><span>{{ "%.0f"|format(best.price) }} ج</span></div>
+        <div class="fee-row"><span>خدمة المتابعة والتنفيذ</span><span>{{ "%.0f"|format(service_fee) }} ج</span></div>
+        <div class="fee-row total"><span>الإجمالي</span><span>{{ "%.0f"|format(best.price + service_fee) }} ج</span></div>
+      </div>
+
+      <div class="offer-action">
+        <form id="selectForm" method="post" action="/requests/{{ req.id }}/select/{{ best.id }}">
+          <button id="selectBtn" class="primary-btn" type="submit">خلّصهالي</button>
+        </form>
+        {% if alternatives > 0 %}<div class="prototype-note">فيه {{ alternatives }} اختيار آخر متاح للمقارنة.</div>{% endif %}
+      </div>
+    </section>
+
+    {% else %}
+    <div class="message assistant">
+      <div class="assistant-line">
+        <span class="mini-orb"></span>
+        <div class="assistant-content">
+          <b>متابع الطلب، لكن مفيش عرض فعلي لسه.</b>
+          <p>هفضل صريح: اكتشاف جهة مش هو نفس استلامها للطلب، واستلام الطلب مش هو نفس وصول عرض.</p>
+        </div>
+      </div>
+    </div>
+
+    <section class="panel wait-box">
+      <div class="spinner"></div>
+      <div class="status-chip">الحالة بتتحدث تلقائيًا</div>
+      <h2>مستني نتيجة حقيقية.</h2>
+      <p>أول ما يكون فيه عرض صالح فعلًا، الشاشة دي هتتغير تلقائيًا.</p>
+    </section>
     {% endif %}
+  </section>
 
-    <div class="fees">
-      <div class="fee-row"><span>التنفيذ</span><span>{{ "%.0f"|format(best.price) }} ج</span></div>
-      <div class="fee-row"><span>خدمة خلّصهالي</span><span>{{ "%.0f"|format(service_fee) }} ج</span></div>
-      <div class="fee-row total"><span>الإجمالي</span><span>{{ "%.0f"|format(best.price + service_fee) }} ج</span></div>
-    </div>
-
-    <form id="selectForm" method="post" action="/requests/{{ req.id }}/select/{{ best.id }}">
-      <button id="selectBtn" class="primary" style="width:100%;margin-top:18px">خلّصهالي</button>
+  <div class="bottom-composer">
+    <form action="/requests" method="post">
+      <textarea name="text" placeholder="عايز تضيف حاجة أو تبدأ طلب جديد؟"></textarea>
+      <button class="send-circle" aria-label="إرسال">↑</button>
     </form>
-    {% if alternatives > 0 %}
-    <div class="footer-note">فيه {{ alternatives }} اختيار تاني متاح للمقارنة.</div>
-    {% endif %}
-  </section>
-  {% else %}
-  <section class="stage-shell wait-card">
-    <div class="spinner"></div>
-    <h1>لسه بدور.</h1>
-    <p class="muted">مستني عرض فعلي ومطابق قبل ما أقدمهولك.</p>
-  </section>
-  {% endif %}
+  </div>
 </main>
 
 <script>
 (function(){
-  const f=document.getElementById("selectForm"),b=document.getElementById("selectBtn");
-  if(f&&b)f.addEventListener("submit",()=>{b.classList.add("loading");b.disabled=true;b.textContent="بأكد اختيارك"});
+  const f=document.getElementById('selectForm'),b=document.getElementById('selectBtn');
+  if(f&&b)f.addEventListener('submit',()=>{b.classList.add('loading-btn');b.disabled=true;b.textContent='بأكد اختيارك'});
+  {% if not best %}
+  let busy=false;
+  setInterval(function(){
+    if(busy)return;busy=true;
+    fetch(location.href,{headers:{'X-Requested-With':'fetch'}})
+      .then(r=>r.text()).then(html=>{
+        const doc=new DOMParser().parseFromString(html,'text/html');
+        const root=doc.querySelector('[data-has-offer]');
+        if(root&&root.dataset.hasOffer==='1')location.reload();
+      }).catch(()=>{}).finally(()=>busy=false);
+  },7000);
+  {% endif %}
 })();
 </script>
 </body></html>

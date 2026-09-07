@@ -5,110 +5,180 @@
 <title>محتاج إيه؟</title>
 <link rel="stylesheet" href="/static/app.css">
 <link rel="manifest" href="/static/manifest.webmanifest">
-<meta name="theme-color" content="#f4f1eb">
+<meta name="theme-color" content="#f6f3ee">
 </head>
 <body>
-<main class="app">
-  <div class="top">
-    <a class="brand" href="/">محتاج إيه؟</a>
-    <a class="small" href="/privacy">الخصوصية</a>
-  </div>
+<main class="app-shell">
+  <header class="app-top">
+    <a class="brand" href="/"><span class="brand-mark">م</span><span>محتاج إيه؟</span></a>
+    <a class="top-action" href="/privacy">خصوصيتك</a>
+  </header>
 
-  <section class="hero">
-    <div class="eyebrow"><span class="eyebrow-dot"></span> أنا معاك من الطلب لحد النتيجة</div>
+  <section class="assistant-hero">
+    <div class="assistant-kicker"><span class="live-dot"></span><span>معاك من أول الطلب لحد ما النتيجة تتأكد</span></div>
     <h1>قولّي محتاج إيه.</h1>
-    <p class="muted">اكتبها بطريقتك. أنا أفهم المطلوب وأتابع معاك بدل ما تلف بين مواقع وأماكن.</p>
+    <p>اكتبها زي ما تقولها لحد يعرفك. أنا أفهم المطلوب، أطلب منك الناقص فقط لو لازم، وأفضل ورا الموضوع معاك.</p>
+  </section>
 
+  <section class="panel composer-card" id="composer">
     <form id="requestForm" method="post" action="/requests">
-      <div class="askbox">
-        <textarea name="text" placeholder="مثال: عايز غسالة 9 كيلو كويسة في حدود 25 ألف وتوصل بكرة" required></textarea>
-        <div class="actionbar">
-          <button id="sendBtn" class="primary" type="submit"><span id="sendLabel">ابدأ الطلب</span></button>
-        </div>
+      <textarea id="requestText" class="composer-input" name="text" placeholder="مثال: عايز غسالة كويسة في حدود 25 ألف وتوصل بكرة" required></textarea>
+      <div id="clarifyBox" class="notice hidden"></div>
+      <div class="composer-footer">
+        <button class="icon-btn" id="micBtn" type="button" aria-label="اتكلم" title="اتكلم">◉</button>
+        <button id="sendBtn" class="send-btn" type="submit">خلّصهالي</button>
       </div>
+      <div class="helper">Enter للإرسال · Shift + Enter لسطر جديد <span id="voiceHint"></span></div>
     </form>
   </section>
 
-  {% if suggestions %}
-  <h2>لقيت حاجة ممكن أتابعها</h2>
-  {% for s in suggestions %}
-  <div class="card card-row">
-    <div class="icon-bubble">↻</div>
-    <div style="flex:1;min-width:0">
-      <b>{{ s.followup_intent }}</b>
-      <p class="muted">{{ s.raw_text }}</p>
-      <div class="row">
-        <form method="post" action="/detected/{{ s.id }}/accept"><button class="primary" style="width:100%">تابعها معايا</button></form>
-        <form method="post" action="/detected/{{ s.id }}/dismiss"><button class="secondary" style="width:100%">مش محتاج</button></form>
-      </div>
-    </div>
-  </div>
-  {% endfor %}
+  {% if open_cases %}
+  <div class="section-head"><h2>أنا ورا إيه دلوقتي</h2><span>{{ open_cases|length }} مفتوح</span></div>
+  <section class="case-grid">
+    {% for c in open_cases %}
+      {% if loop.index <= 3 %}
+      <a class="case-card" href="{{ c.url }}">
+        <span class="case-icon">↻</span>
+        <span class="case-copy">
+          <b>{{ c.title }}</b>
+          <small>
+            {% if c.status == "AWAITING_PAYMENT" %}محتاج قرارك
+            {% elif c.status == "CONFIRMED" %}اتأكد وبدأت المتابعة
+            {% elif c.status == "IN_PROGRESS" %}جاري التنفيذ
+            {% elif c.status == "OUT_FOR_DELIVERY" %}في الطريق
+            {% elif c.status == "COMPLETED_PENDING_CONFIRMATION" %}محتاج أتأكد منك
+            {% elif c.status == "ISSUE_OPEN" %}فيه مشكلة وأنا وراها
+            {% else %}متابعها معاك{% endif %}
+          </small>
+        </span>
+        <span class="chev">‹</span>
+      </a>
+      {% endif %}
+    {% endfor %}
+  </section>
   {% endif %}
 
   {% if followups %}
-  <h2>أنا ورا الحاجات دي</h2>
-  {% for f in followups %}
-  <div class="card card-row">
-    <div class="icon-bubble">•</div>
-    <div><b>{{ f.case.title }}</b><p class="muted">{{ f.task.action }}</p><span class="badge">{{ f.task.due_at }}</span></div>
-  </div>
-  {% endfor %}
+  {% set f = followups[0] %}
+  <div class="section-head"><h2>محتاج قرارك</h2><span>واحدة بس</span></div>
+  <section class="decision-card">
+    <span class="tag">متابعة</span>
+    <h3>{{ f.case.title }}</h3>
+    <p>{{ f.task.action }}</p>
+    <a class="primary-btn" style="display:flex;align-items:center;justify-content:center;text-decoration:none" href="/external/{{ f.case.id }}">افتح المتابعة</a>
+  </section>
   {% endif %}
 
-  {% if open_cases %}
-  <h2>متابع معاك</h2>
-  {% for c in open_cases %}
-  <a class="list-link" href="{{ c.url if c.url is defined else '/cases/' ~ c.id }}">
-    <div class="card card-row">
-      <div class="icon-bubble">→</div>
-      <div><b>{{ c.title if c.title is defined else c.status }}</b><p class="muted">{{ c.status }}</p></div>
+  {% if suggestions %}
+  {% set s = suggestions[0] %}
+  <div class="section-head"><h2>لقيت حاجة ممكن تفيدك</h2><span>اقتراح واحد</span></div>
+  <section class="suggestion-card">
+    <span class="tag">اقتراح ذكي</span>
+    <h3>{{ s.followup_intent }}</h3>
+    <p>{{ s.raw_text }}</p>
+    <div class="inline-actions">
+      <form method="post" action="/detected/{{ s.id }}/accept"><button class="primary-btn">تابعها معايا</button></form>
+      <form method="post" action="/detected/{{ s.id }}/dismiss"><button class="secondary-btn">مش محتاج</button></form>
     </div>
-  </a>
-  {% endfor %}
+  </section>
   {% endif %}
 
   {% if learned %}
-  <h2>بدأت أفهمك</h2>
-  {% for p in learned %}
-  <div class="card">
-    <b>{{ p.preference_value }}</b>
-    <p class="muted">لاحظت ده في {{ p.evidence_count }} تعاملات. أعتمده للمرة الجاية؟</p>
-    <div class="row">
-      <form method="post" action="/preferences/{{ p.id }}/confirm"><button class="primary" style="width:100%">أيوه</button></form>
-      <form method="post" action="/preferences/{{ p.id }}/reject"><button class="secondary" style="width:100%">لأ</button></form>
+  {% set p = learned[0] %}
+  <div class="section-head"><h2>بدأت أفهمك</h2><span>بإذنك فقط</span></div>
+  <section class="suggestion-card">
+    <span class="tag">تفضيل محتمل</span>
+    <h3>{{ p.preference_value }}</h3>
+    <p>لاحظت ده في {{ p.evidence_count }} تعاملات. أعتمده للمرة الجاية؟</p>
+    <div class="inline-actions">
+      <form method="post" action="/preferences/{{ p.id }}/confirm"><button class="primary-btn">اعتمده</button></form>
+      <form method="post" action="/preferences/{{ p.id }}/reject"><button class="secondary-btn">لأ</button></form>
     </div>
-  </div>
-  {% endfor %}
+  </section>
   {% endif %}
 
   {% if memories %}
-  <h2>حاجات خلصناها قبل كده</h2>
-  {% for m in memories %}
-  <div class="card">
-    <p>{{ m.value }}</p>
-    <form method="post" action="/memory/{{ m.id }}/repeat"><button class="secondary">كررها</button></form>
-  </div>
-  {% endfor %}
+  <div class="section-head"><h2>حاجات خلصناها قبل كده</h2><span>فاكرها بإذنك</span></div>
+  <section class="case-grid">
+    {% for m in memories %}
+      {% if loop.index <= 2 %}
+      <div class="case-card">
+        <span class="case-icon">✓</span>
+        <span class="case-copy"><b>{{ m.value }}</b><small>نتيجة اتأكدت قبل كده</small></span>
+        <form method="post" action="/memory/{{ m.id }}/repeat"><button class="quiet-btn">كررها</button></form>
+      </div>
+      {% endif %}
+    {% endfor %}
+  </section>
   {% endif %}
 
-  <div class="footer-note">الطلب يبدأ بكلمة واحدة. التنفيذ والمتابعة يفضلوا معاك لحد ما النتيجة تتأكد.</div>
+  <div id="toast" class="toast"></div>
 </main>
 
 <script>
 (function(){
-  const form=document.getElementById("requestForm");
-  const btn=document.getElementById("sendBtn");
-  const label=document.getElementById("sendLabel");
-  if(!form||!btn)return;
-  form.addEventListener("submit",function(e){
-    if(form.dataset.go==="1") return;
+  const form=document.getElementById('requestForm');
+  const input=document.getElementById('requestText');
+  const send=document.getElementById('sendBtn');
+  const clarify=document.getElementById('clarifyBox');
+  const mic=document.getElementById('micBtn');
+  const toast=document.getElementById('toast');
+  let firstText='', awaiting=false;
+
+  function showToast(msg){
+    toast.textContent=msg;toast.classList.add('show');
+    setTimeout(()=>toast.classList.remove('show'),1800);
+  }
+  function followupFor(text){
+    const t=text.trim().toLowerCase();
+    if(!t) return '';
+    if(/موتوسيكل|موتوسيكلات|سيارة|عربية|عربيات/.test(t) && !/جديد|مستعمل/.test(t)) return 'تمام. جديد ولا مستعمل؟';
+    if(/صيانة|تصليح|سباك|كهربائي|تكييف|نجار/.test(t) && !/مدينة نصر|مصر الجديدة|التجمع|القاهرة الجديدة|مدينتي|المعادي|الزمالك|الدقي|الهرم|الجيزة/.test(t)) return 'تمام. الخدمة مطلوبة في أنهي منطقة؟';
+    if(/مطعم|أكل|غدا|غداء|عشا|عشاء|دليفري|توصيل أكل/.test(t) && !/مدينة نصر|مصر الجديدة|التجمع|القاهرة الجديدة|مدينتي|المعادي|الزمالك|الدقي|الهرم|الجيزة/.test(t)) return 'تمام. التوصيل لأنهي منطقة؟';
+    return '';
+  }
+  form.addEventListener('submit',function(e){
+    if(form.dataset.final==='1') return;
     e.preventDefault();
-    btn.classList.add("loading");
-    btn.disabled=true;
-    label.textContent="بفهم طلبك";
-    setTimeout(function(){form.dataset.go="1";form.submit()},420);
+    const text=input.value.trim();
+    if(!text) return;
+    if(awaiting){
+      const answer=text;
+      input.value=firstText+' — '+answer;
+      form.dataset.final='1';
+      send.textContent='ببدأ…';send.classList.add('loading-btn');send.disabled=true;
+      setTimeout(()=>form.submit(),260);
+      return;
+    }
+    const q=followupFor(text);
+    if(q){
+      firstText=text;awaiting=true;
+      clarify.textContent=q;clarify.classList.remove('hidden');
+      input.value='';input.placeholder='اكتب الإجابة هنا';
+      input.focus();send.textContent='كمّل';
+      return;
+    }
+    form.dataset.final='1';
+    send.textContent='بفهم طلبك';send.classList.add('loading-btn');send.disabled=true;
+    setTimeout(()=>form.submit(),260);
   });
+  input.addEventListener('keydown',function(e){
+    if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();form.requestSubmit()}
+  });
+
+  const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(SpeechRecognition){
+    mic.addEventListener('click',function(){
+      const r=new SpeechRecognition();r.lang='ar-EG';r.interimResults=false;r.maxAlternatives=1;
+      mic.textContent='●';showToast('بتسمعك…');
+      r.onresult=(ev)=>{input.value=(input.value+' '+ev.results[0][0].transcript).trim();input.focus()};
+      r.onerror=()=>showToast('الصوت مش متاح دلوقتي');
+      r.onend=()=>{mic.textContent='◉'};
+      r.start();
+    });
+  }else{
+    mic.style.display='none';
+  }
 })();
 </script>
 </body></html>
