@@ -290,3 +290,54 @@ class MobileSourceEvent(Base):
     event_hash = Column(String, nullable=False, unique=True)
     status = Column(String, default="RECEIVED")
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ConversationThread(Base):
+    """A durable customer conversation, independent from any single request/case."""
+    __tablename__ = "conversation_threads"
+    id = Column(String, primary_key=True)
+    customer_ref = Column(String, nullable=False, default="anonymous", index=True)
+    locale = Column(String, nullable=False, default="ar-EG")
+    language = Column(String, nullable=False, default="ar")
+    currency = Column(String, nullable=False, default="EGP")
+    region = Column(String, nullable=False, default="EG")
+    status = Column(String, nullable=False, default="ACTIVE")
+    provider = Column(String, nullable=True)
+    degraded_mode = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ConversationMessage(Base):
+    __tablename__ = "conversation_messages"
+    id = Column(Integer, primary_key=True)
+    thread_id = Column(String, ForeignKey("conversation_threads.id"), nullable=False, index=True)
+    role = Column(String, nullable=False)  # USER / ASSISTANT / SYSTEM
+    content = Column(Text, nullable=False)
+    intent = Column(String, nullable=True)
+    style_metadata = Column(Text, nullable=True)  # JSON: language, tone, mood, urgency, formality
+    provider_metadata = Column(Text, nullable=True)  # JSON: model/provider/degraded
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ConversationCaseLink(Base):
+    __tablename__ = "conversation_case_links"
+    id = Column(Integer, primary_key=True)
+    thread_id = Column(String, ForeignKey("conversation_threads.id"), nullable=False, index=True)
+    case_type = Column(String, nullable=False)  # REQUEST / EXECUTION / EXTERNAL
+    case_id = Column(Integer, nullable=False)
+    relationship = Column(String, nullable=False, default="PRIMARY")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ConversationAction(Base):
+    """Audit trail for proposed, blocked, and executed business actions."""
+    __tablename__ = "conversation_actions"
+    id = Column(Integer, primary_key=True)
+    thread_id = Column(String, ForeignKey("conversation_threads.id"), nullable=False, index=True)
+    message_id = Column(Integer, ForeignKey("conversation_messages.id"), nullable=True)
+    action_type = Column(String, nullable=False)
+    status = Column(String, nullable=False)  # PROPOSED / BLOCKED / EXECUTED / FAILED
+    reason = Column(Text, nullable=False)
+    payload = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

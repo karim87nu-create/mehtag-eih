@@ -15,34 +15,12 @@
     <a class="top-action" href="/privacy">خصوصيتك</a>
   </header>
 
-  <section class="conversation-hero">
-    <div class="presence"><span class="live-dot"></span><span>أنا معاك</span></div>
-    <div id="chatThread" class="chat-thread"
-         data-active-title="{% if open_cases %}{{ open_cases[0].title|e }}{% endif %}">
-      <div id="introMessage" class="chat-message assistant welcome-message">
-        <div class="assistant-avatar">م</div>
-        <div class="bubble"><span class="typing-placeholder">...</span></div>
-      </div>
-    </div>
-  </section>
-
-  <section class="conversation-composer" id="composer">
-    <form id="chatForm" autocomplete="off">
-      <textarea id="chatInput" rows="1" placeholder="اكتب أو اتكلم بطريقتك..." aria-label="اكتب رسالتك"></textarea>
-      <div class="composer-controls">
-        <button class="voice-button" id="micBtn" type="button" aria-label="اتكلم" title="اتكلم"><span class="mic-icon">●</span></button>
-        <button id="sendBtn" class="chat-send" type="submit" aria-label="إرسال">↑</button>
-      </div>
-    </form>
-    <div class="composer-hint" id="composerHint">مش لازم ترتب كلامك. أنا هسألك عن الناقص بس.</div>
-  </section>
-
   {% if open_cases %}
-  <section class="ambient-strip">
-    <div class="ambient-title"><b>أنا متابع معاك</b><span>{{ open_cases|length }} مفتوح</span></div>
+  <section class="ambient-strip home-cases" aria-label="الموضوعات المفتوحة">
+    <div class="ambient-title"><b>متابعها معاك</b><span>{{ open_cases|length }} مفتوح</span></div>
     <div class="ambient-list">
       {% for c in open_cases %}
-      {% if loop.index <= 3 %}
+      {% if loop.index <= 5 %}
       <a class="ambient-item" href="{{ c.url }}">
         <span class="ambient-dot"></span>
         <span><b>{{ c.title }}</b><small>
@@ -51,8 +29,13 @@
           {% elif c.status == "IN_PROGRESS" %}جاري التنفيذ
           {% elif c.status == "OUT_FOR_DELIVERY" %}في الطريق
           {% elif c.status == "COMPLETED_PENDING_CONFIRMATION" %}محتاج أتأكد منك
-          {% elif c.status == "ISSUE_OPEN" %}فيه مشكلة وأنا وراها
-          {% else %}متابعها معاك{% endif %}
+          {% elif c.status == "ISSUE_OPEN" %}فيه مشكلة مفتوحة
+          {% elif c.status == "WAITING_OFFERS" %}تواصل مؤكد — مستنيين عروض
+          {% elif c.status == "OFFER_FOUND" %}وصل عرض فعلي
+          {% elif c.status == "SUPPLY_FOUND_NO_CHANNEL" %}لقينا جهات — التواصل مش مؤكد
+          {% elif c.status == "DISCOVERING" %}بندور على جهات مناسبة
+          {% elif c.status == "NO_REACHABLE_SUPPLY" %}ملقيناش جهة قابلة للتواصل دلوقتي
+          {% else %}المتابعة مفتوحة{% endif %}
         </small></span>
         <span class="ambient-arrow">‹</span>
       </a>
@@ -75,168 +58,99 @@
   {% if suggestions %}
   {% set s = suggestions[0] %}
   <section class="quiet-card suggestion">
-    <span class="quiet-label">حاجة ممكن تفيدك</span>
-    <h3>{{ s.followup_intent }}</h3>
+    <span class="quiet-label">لاحظت حاجة</span>
+    <h3>{{ s.suggested_action or s.title }}</h3>
     <p>{{ s.raw_text }}</p>
     <div class="inline-actions">
-      <form method="post" action="/detected/{{ s.id }}/accept"><button class="quiet-action solid">تابعها معايا</button></form>
-      <form method="post" action="/detected/{{ s.id }}/dismiss"><button class="quiet-action">مش محتاج</button></form>
+      <form method="post" action="/suggestions/{{ s.id }}/accept"><button class="quiet-action solid">تابعها معايا</button></form>
+      <form method="post" action="/suggestions/{{ s.id }}/dismiss"><button class="quiet-action">مش محتاج</button></form>
     </div>
   </section>
   {% endif %}
+
+  <section class="conversation-hero" id="conversation" aria-live="polite">
+    <div id="chatThread" class="chat-thread"></div>
+    <div id="emptyThread" class="empty-thread">
+      <span class="live-dot"></span><span>اكتب أو اتكلم وقت ما تحب</span>
+    </div>
+    <div id="degradedNotice" class="degraded-notice hidden">
+      الوضع المحدود شغّال حاليًا؛ المتابعة والحفظ متاحين، لكن قدرات المحادثة الكاملة غير متصلة.
+    </div>
+  </section>
+
+  <section class="conversation-composer" id="composer">
+    <form id="chatForm" autocomplete="off">
+      <textarea id="chatInput" rows="1" placeholder="اكتب أو اتكلم…" aria-label="اكتب رسالتك"></textarea>
+      <div class="composer-controls">
+        <button class="voice-button" id="micBtn" type="button" aria-label="اتكلم" title="اتكلم"><span class="mic-icon">●</span></button>
+        <button id="sendBtn" class="chat-send" type="submit" aria-label="إرسال">↑</button>
+      </div>
+    </form>
+    <div class="composer-hint" id="composerHint">ابدأ الكلام بطريقتك.</div>
+  </section>
 </main>
 
 <script>
 (function(){
   const thread=document.getElementById('chatThread');
-  const intro=document.getElementById('introMessage');
+  const empty=document.getElementById('emptyThread');
+  const degraded=document.getElementById('degradedNotice');
   const form=document.getElementById('chatForm');
   const input=document.getElementById('chatInput');
   const send=document.getElementById('sendBtn');
   const mic=document.getElementById('micBtn');
   const hint=document.getElementById('composerHint');
-  const KEY='mehtag_chat_draft_v3';
-  const TRANSCRIPT='mehtag_chat_transcript_v3';
-  const AREAS=['مدينة نصر','مصر الجديدة','التجمع','القاهرة الجديدة','مدينتي','الرحاب','المعادي','الزمالك','الدقي','المهندسين','الهرم','الجيزة','شبرا','حلوان','6 أكتوبر','اكتوبر','الشيخ زايد','القاهرة'];
+  const THREAD_KEY='maak_conversation_thread_v1';
+  const CUSTOMER_KEY='maak_customer_ref_v1';
+  let threadId=localStorage.getItem(THREAD_KEY);
+  let customerRef=localStorage.getItem(CUSTOMER_KEY);
+  if(!customerRef){customerRef=(crypto.randomUUID?crypto.randomUUID():String(Date.now()));localStorage.setItem(CUSTOMER_KEY,customerRef)}
 
-  function greeting(){return new Date().getHours()<12?'صباح الخير.':'مساء الخير.'}
-  const activeTitle=(thread.dataset.activeTitle||'').trim();
-  const introText=activeTitle
-    ? `${greeting()} أنا لسه متابع معاك موضوع «${activeTitle}». لو عايز نكمل فيه أو تبدأ حاجة تانية، كلّمني عادي.`
-    : `${greeting()} أنا موجود عشان أخلّص معاك اللي محتاجه، من أول الفكرة لحد ما تتأكد إن الموضوع خلص. قولّي اللي في دماغك بطريقتك، ومش لازم ترتبه.`;
-
-  let state={category:null,messages:[],condition:null,budget:null,area:null,deadline:null,awaiting:null,baseText:'',startedAt:Date.now()};
-  try{
-    const saved=JSON.parse(sessionStorage.getItem(KEY)||'null');
-    if(saved && Date.now()-(saved.startedAt||0)<45*60*1000) state=saved;
-  }catch(e){}
-
-  function save(){sessionStorage.setItem(KEY,JSON.stringify(state))}
   function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+  function setDirection(node,text){
+    const ar=(text.match(/[\u0600-\u06ff]/g)||[]).length;
+    const en=(text.match(/[A-Za-z]/g)||[]).length;
+    node.dir=ar>=en?'rtl':'ltr';
+  }
   function addMessage(role,text,animate=true){
-    const wrap=document.createElement('div');
-    wrap.className='chat-message '+role+(animate?' entering':'');
+    empty.classList.add('hidden');
+    const wrap=document.createElement('div');wrap.className='chat-message '+role+(animate?' entering':'');
     wrap.innerHTML=role==='assistant'
       ? `<div class="assistant-avatar">م</div><div class="bubble">${esc(text)}</div>`
       : `<div class="bubble">${esc(text)}</div>`;
-    thread.appendChild(wrap);
+    setDirection(wrap.querySelector('.bubble'),text);thread.appendChild(wrap);
     requestAnimationFrame(()=>wrap.scrollIntoView({behavior:'smooth',block:'end'}));
   }
-  function assistant(text,delay=280){
-    return new Promise(resolve=>{
-      const thinking=document.createElement('div');
-      thinking.className='chat-message assistant entering thinking-message';
-      thinking.innerHTML='<div class="assistant-avatar">م</div><div class="bubble"><span class="thinking-inline"><i></i><i></i><i></i></span></div>';
-      thread.appendChild(thinking);
-      thinking.scrollIntoView({behavior:'smooth',block:'end'});
-      setTimeout(()=>{
-        thinking.remove();addMessage('assistant',text);
-        state.messages.push({role:'assistant',text});save();resolve();
-      },delay);
-    });
+  function thinking(){
+    const node=document.createElement('div');node.className='chat-message assistant entering thinking-message';
+    node.innerHTML='<div class="assistant-avatar">م</div><div class="bubble"><span class="thinking-inline"><i></i><i></i><i></i></span></div>';
+    thread.appendChild(node);node.scrollIntoView({behavior:'smooth',block:'end'});return node;
   }
-  function user(text){addMessage('user',text);state.messages.push({role:'user',text});save()}
-  intro.querySelector('.bubble').textContent=introText;
-  if(state.messages.length){
-    state.messages.forEach(m=>addMessage(m.role,m.text,false));
-    hint.textContent=state.awaiting?'جاوبني على النقطة دي بس، والباقي سيبه عليّ.':'كمّل كلامك عادي.';
+  function addCard(card){
+    if(!card)return;const wrap=document.createElement('a');wrap.className='chat-context-card entering';wrap.href=card.url||'#';
+    wrap.innerHTML=`<small>${esc(card.label||'متابعة')}</small><b>${esc(card.title||'')}</b><span>افتح الحالة ‹</span>`;
+    thread.appendChild(wrap);wrap.scrollIntoView({behavior:'smooth',block:'end'});
   }
-
-  function normalizeDigits(s){return s.replace(/[٠-٩]/g,d=>'٠١٢٣٤٥٦٧٨٩'.indexOf(d))}
-  function parseBudget(text){
-    const n=normalizeDigits(text.replace(/,/g,''));
-    const m=n.match(/(\d+(?:\.\d+)?)\s*(ألف|الف|k)?/i);
-    if(!m)return null;
-    let v=parseFloat(m[1]);if(m[2])v*=1000;
-    if(v<1000 && /(ميزاني|حدود|لحد|حتى|سقف|حوالي)/.test(text) && v<200)v*=1000;
-    return isFinite(v)?v:null;
+  async function loadHistory(){
+    if(!threadId)return;
+    try{
+      const r=await fetch(`/api/conversations/${encodeURIComponent(threadId)}?customer_ref=${encodeURIComponent(customerRef)}`);
+      if(!r.ok){if(r.status===404||r.status===403){localStorage.removeItem(THREAD_KEY);threadId=null}return}
+      const data=await r.json();data.messages.forEach(m=>addMessage(m.role,m.content,false));degraded.classList.toggle('hidden',!data.degraded);
+    }catch(e){hint.textContent='المحادثة المحفوظة مش متاحة دلوقتي.'}
   }
-  function parseArea(text){return AREAS.find(a=>text.includes(a))||null}
-  function parseDeadline(text){return ['النهاردة','اليوم','بكرة','غدا','غداً','غدًا'].find(x=>text.includes(x))||null}
-  function detectCategory(text){
-    if(/موتوسيكل|موتوسيكلات|موتسيكل|سكوتر|عربية|عربيات|سيارة|سيارات/.test(text))return'vehicle';
-    if(/سباك|كهربائي|نجار|صيانة|تصليح|تكييف|نقاش|فني|تنظيف|نقل عفش/.test(text))return'service';
-    if(/مطعم|أكل|اكل|غدا|غداء|عشا|عشاء|بيتزا|برجر|كشري|مشويات|دليفري/.test(text))return'food';
-    if(/غسالة|ثلاجة|تليفزيون|شاشة|موبايل|تليفون|لاب توب|لابتوب|كمبيوتر|تكييف/.test(text))return'product';
-    if(/حجز|فندق|طيران|تذكرة|رحلة|سفر/.test(text))return'booking';
-    return'general';
-  }
-  function parseIntoState(text){
-    if(!state.category)state.category=detectCategory(text);
-    const low=text.trim().toLowerCase();
-    if(/جديد|زيرو/.test(low))state.condition='جديد';
-    if(/مستعمل|استعمال/.test(low))state.condition='مستعمل';
-    const b=parseBudget(text);
-    if(b&&(state.awaiting==='budget'||/(ميزاني|حدود|لحد|حتى|سقف|حوالي|ألف|الف|k)/i.test(text)))state.budget=b;
-    const a=parseArea(text);if(a)state.area=a;
-    const d=parseDeadline(text);if(d)state.deadline=d;
-  }
-  function noConstraint(text){return /^(ابدأ|ابدأ كده|ابدأ انت|مفيش|مش فارقة|مش فارقه|أي حاجة|اي حاجه|الأفضل|الافضل|دور|شوف انت|مش محدد|من غير)$/i.test(text.trim())}
-  function money(v){return new Intl.NumberFormat('ar-EG',{maximumFractionDigits:0}).format(v)+' جنيه'}
-
-  function nextStep(){
-    const cat=state.category||'general';
-    if(cat==='vehicle'){
-      if(!state.condition)return{key:'condition',text:'تمام. أقدر أساعدك نلاقي اختيار مناسب، بس محتاج أعرف الأول: عايزه جديد ولا مستعمل؟'};
-      if(!state.budget&&!state.skipBudget)return{key:'budget',text:`تمام، ${state.condition}. عندك ميزانية تقريبية عايزني ما أتخطاهاش؟ ولو مش محدد قولّي ابدأ من أفضل قيمة.`};
-      if(!state.area)return{key:'area',text:`حلو${state.budget?'، هخلي السقف حوالي '+money(state.budget):''}. هتستلمه أو تدور عليه في أنهي منطقة؟`};
-      return{key:'ready',text:`تمام، كده الصورة وضحت عندي. هبدأ أدورلك على الأنسب${state.budget?' في حدود '+money(state.budget):''} حوالين ${state.area}، ومش هقولك إن فيه عرض إلا لما يوصل عرض فعلي.`};
-    }
-    if(cat==='service'){
-      if(!state.area)return{key:'area',text:'تمام. أقدر أرتبلك الخدمة، بس محتاج أعرف مكانها في أنهي منطقة؟'};
-      return{key:'ready',text:`تمام، عرفت المطلوب والمكان. هبدأ أدور على جهة مناسبة في ${state.area} وأرجعلك باللي يستاهل.`};
-    }
-    if(cat==='food'){
-      if(!state.area)return{key:'area',text:'تمام. التوصيل لأنهي منطقة؟'};
-      return{key:'ready',text:`تمام، هبدأ أشوف الأنسب للطلب ده ويوصل لـ ${state.area}.`};
-    }
-    if(cat==='product'){
-      if(!state.budget&&!state.skipBudget)return{key:'budget',text:'تمام. عندك ميزانية تقريبية عايزني ألتزم بيها؟ ولو مش محدد قولّي ابدأ من أفضل قيمة.'};
-      if(/توصيل|يوصل|وصّل|وصل/.test(state.baseText)&&!state.area)return{key:'area',text:'تمام. التوصيل لأنهي منطقة؟'};
-      return{key:'ready',text:`تمام، فهمت اللي بتدور عليه${state.budget?' والميزانية حوالي '+money(state.budget):''}. هبدأ أشوف الأنسب بدل ما أرمي قدامك اختيارات وخلاص.`};
-    }
-    if(cat==='booking'){
-      if(!state.deadline)return{key:'deadline',text:'تمام. الحجز أو السفر إمتى تقريبًا؟'};
-      return{key:'ready',text:'تمام، كده عندي بداية واضحة. هبدأ أدور على الأنسب للميعاد ده وأرتبلك الاختيارات.'};
-    }
-    if(!state.confirmedGeneral)return{key:'general',text:'تمام، فهمت الفكرة. فيه شرط واحد أساسي لازم ما أتجاوزهش—ميزانية، مكان، أو ميعاد؟ ولو مفيش قولّي ابدأ.'};
-    return{key:'ready',text:'تمام، كده عندي اللي يكفيني أبدأ. هدوّر على نتيجة مفيدة فعلًا، ومش هفترض إن حاجة حصلت قبل ما تحصل.'};
-  }
-
-  function combineRequest(){return state.messages.filter(m=>m.role==='user').map(m=>m.text).join(' — ')}
-
   async function handle(text){
     text=(text||'').trim();if(!text||send.disabled)return;
-    user(text);if(!state.baseText)state.baseText=text;
-    if(state.awaiting==='budget'&&noConstraint(text))state.skipBudget=true;
-    if(state.awaiting==='general'){
-      if(noConstraint(text))state.confirmedGeneral=true;
-      else{
-        const b=parseBudget(text);if(b)state.budget=b;
-        const a=parseArea(text);if(a)state.area=a;
-        const d=parseDeadline(text);if(d)state.deadline=d;
-        state.confirmedGeneral=true;
-      }
-    }else parseIntoState(text);
-
-    const step=nextStep();
-    state.awaiting=step.key==='ready'?null:step.key;save();
-    input.value='';autoSize();
-    hint.textContent=step.key==='ready'?'هبدأ التنفيذ على الكلام اللي اتفقنا عليه.':'جاوبني على النقطة دي بس، والباقي سيبه عليّ.';
-    await assistant(step.text,step.key==='ready'?360:260);
-
-    if(step.key==='ready'){
-      send.disabled=true;mic.disabled=true;
-      const payload={messages:state.messages,finalText:combineRequest(),createdAt:Date.now()};
-      localStorage.setItem(TRANSCRIPT,JSON.stringify(payload));sessionStorage.removeItem(KEY);
-      setTimeout(()=>{
-        const f=document.createElement('form');f.method='post';f.action='/requests';
-        const x=document.createElement('input');x.type='hidden';x.name='text';x.value=payload.finalText;
-        f.appendChild(x);document.body.appendChild(f);f.submit();
-      },900);
-    }
+    addMessage('user',text);input.value='';autoSize();send.disabled=true;mic.disabled=true;hint.textContent='لحظة…';const wait=thinking();
+    try{
+      const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text,thread_id:threadId,customer_ref:customerRef,locale:navigator.language||'ar-EG'})});
+      const data=await r.json();wait.remove();if(!r.ok)throw new Error(data.detail||'request failed');
+      threadId=data.thread_id;localStorage.setItem(THREAD_KEY,threadId);addMessage('assistant',data.message.content);addCard(data.card);
+      degraded.classList.toggle('hidden',!data.provider.degraded);
+      hint.textContent=data.action.status==='EXECUTED'?'المتابعة بدأت، والحالة قدامك.':'كمّل كلامك عادي.';
+    }catch(e){wait.remove();addMessage('assistant','حصلت مشكلة في الاتصال. رسالتك ما اتحولتش لأي إجراء.');hint.textContent='جرّب تبعتها تاني.'}
+    finally{send.disabled=false;mic.disabled=false;input.focus()}
   }
-
   form.addEventListener('submit',e=>{e.preventDefault();handle(input.value)});
   input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();handle(input.value)}});
   function autoSize(){input.style.height='auto';input.style.height=Math.min(input.scrollHeight,128)+'px'}
@@ -246,14 +160,14 @@
   if(SpeechRecognition){
     let active=false;
     mic.addEventListener('click',()=>{
-      if(active)return;
-      const r=new SpeechRecognition();r.lang='ar-EG';r.interimResults=false;r.maxAlternatives=1;
-      active=true;mic.classList.add('listening');hint.textContent='سامعك… اتكلم عادي.';
-      r.onresult=ev=>{const said=ev.results[0][0].transcript.trim();input.value=said;autoSize();setTimeout(()=>handle(said),220)};
-      r.onerror=()=>{hint.textContent='الصوت مش متاح دلوقتي، اكتبلي عادي.'};
+      if(active)return;const r=new SpeechRecognition();r.lang=navigator.language||'ar-EG';r.interimResults=false;r.maxAlternatives=1;
+      active=true;mic.classList.add('listening');hint.textContent='سامعك…';
+      r.onresult=ev=>{input.value=ev.results[0][0].transcript.trim();autoSize()};
+      r.onerror=()=>{hint.textContent='الصوت مش متاح دلوقتي، اكتب عادي.'};
       r.onend=()=>{active=false;mic.classList.remove('listening')};r.start();
     });
   }else mic.style.display='none';
+  loadHistory();
 })();
 </script>
 </body></html>

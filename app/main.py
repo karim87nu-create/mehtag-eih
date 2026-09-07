@@ -1,5 +1,7 @@
 import re
 import hashlib
+import json
+import uuid
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 from fastapi import FastAPI, Request as FastAPIRequest, Form, Depends, HTTPException
@@ -7,16 +9,20 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timedelta
+from pydantic import BaseModel, Field
 from .db import Base, engine, SessionLocal
-from .models import Request, Business, MerchantLink, Offer, Event, ExecutionCase, CaseEvent, ExternalCase, MemoryFact, DetectedTransaction, TransactionEvent, FollowupRule, FollowupTask, LearnedPreference, BusinessPerformance, OfferAmendment, IssueRecord, CustomerRule, CapabilitySignal, ReachAttempt, BusinessActivation, IntegrationEndpoint, TransportDelivery, PaymentIntent, ConsentRecord, AuditRecord, MobileSourceEvent
+from .models import Request, Business, MerchantLink, Offer, Event, ExecutionCase, CaseEvent, ExternalCase, MemoryFact, DetectedTransaction, TransactionEvent, FollowupRule, FollowupTask, LearnedPreference, BusinessPerformance, OfferAmendment, IssueRecord, CustomerRule, CapabilitySignal, ReachAttempt, BusinessActivation, IntegrationEndpoint, TransportDelivery, PaymentIntent, ConsentRecord, AuditRecord, MobileSourceEvent, ConversationThread, ConversationMessage, ConversationCaseLink, ConversationAction
 from .services import understand_request, discover_businesses, build_reachability, new_token
+from .conversation import ActionType, TurnContext, build_provider, gate_action
+from .locale import resolve_locale
 
 Base.metadata.create_all(bind=engine)
-app = FastAPI(title="Request Spike v0.2 - Gate A")
+app = FastAPI(title="معاك", version="1.0.0")
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
 LINK_TTL_HOURS = 24
+conversation_provider = build_provider()
 
 def get_db():
     db = SessionLocal()
@@ -257,6 +263,13 @@ def home(request: FastAPIRequest, db: Session = Depends(get_db)):
     execution_cases = db.query(ExecutionCase).filter(ExecutionCase.status.notin_(["VERIFIED_OUTCOME"])).order_by(ExecutionCase.id.desc()).limit(5).all()
     external_cases = db.query(ExternalCase).filter(ExternalCase.status.notin_(["VERIFIED_OUTCOME"])).order_by(ExternalCase.id.desc()).limit(5).all()
     open_cases = []
+    execution_request_ids = {c.request_id for c in execution_cases}
+    active_requests = db.query(Request).filter(
+        Request.status.in_(["DISCOVERING", "SUPPLY_FOUND_NO_CHANNEL", "WAITING_OFFERS", "OFFER_FOUND", "NO_REACHABLE_SUPPLY"])
+    ).order_by(Request.id.desc()).limit(10).all()
+    for req in active_requests:
+        if req.id not in execution_request_ids:
+            open_cases.append({"kind":"request","title":req.raw_text[:60], "status":req.status, "url":f"/requests/{req.id}"})
     for c in execution_cases:
         req = db.query(Request).filter(Request.id == c.request_id).first()
         open_cases.append({"kind":"execution","title": req.raw_text[:60], "status":c.status, "url":f"/cases/{c.id}"})
@@ -1245,3 +1258,216 @@ def mobile_share(text:str=Form(...), db:Session=Depends(get_db)):
 @app.get("/mobile/setup", response_class=HTMLResponse)
 def mobile_setup(request:FastAPIRequest):
     return templates.TemplateResponse("mobile_setup.html",{"request":request})
+
+
+class ChatTurnInput(BaseModel):
+    message: str = Field(min_length=1, max_length=6000)
+    thread_id: str | None = None
+    customer_ref: str = Field(default="anonymous", max_length=120)
+    locale: str = Field(default="ar-EG", max_length=20)
+
+
+def linked_case_context(db: Session, thread_id: str):
+    links = db.query(ConversationCaseLink).filter(
+        ConversationCaseLink.thread_id == thread_id
+    ).order_by(ConversationCaseLink.id.desc()).all()
+    context = []
+    for link in links:
+        item = {"id": link.case_id, "type": link.case_type, "status": "UNKNOWN", "title": ""}
+        if link.case_type == "REQUEST":
+            row = db.query(Request).filter(Request.id == link.case_id).first()
+            if row:
+                item.update(status=row.status, title=row.raw_text[:120])
+        elif link.case_type == "EXECUTION":
+            row = db.query(ExecutionCase).filter(ExecutionCase.id == link.case_id).first()
+            if row:
+                req = db.query(Request).filter(Request.id == row.request_id).first()
+                item.update(status=row.status, title=(req.raw_text[:120] if req else "متابعة تنفيذ"))
+        elif link.case_type == "EXTERNAL":
+            row = db.query(ExternalCase).filter(ExternalCase.id == link.case_id).first()
+            if row:
+                item.update(status=row.status, title=row.title)
+        if item["status"] != "UNKNOWN":
+            context.append(item)
+    return context
+
+
+def honest_request_card(row: Request):
+    states = {
+        "DISCOVERING": ("بدور على جهات مناسبة", "discovery"),
+        "SUPPLY_FOUND_NO_CHANNEL": ("لقيت جهات، لكن مفيش تواصل مؤكد لسه", "discovery"),
+        "WAITING_OFFERS": ("اتواصلنا فعلًا ومستنيين عروض", "outreach"),
+        "OFFER_FOUND": ("وصل عرض فعلي", "offer"),
+        "NO_REACHABLE_SUPPLY": ("ملقتش جهة قابلة للتواصل دلوقتي", "problem"),
+    }
+    label, phase = states.get(row.status, ("الموضوع مفتوح وبتابعه", "tracking"))
+    return {
+        "type": "status",
+        "phase": phase,
+        "title": row.raw_text[:100],
+        "status": row.status,
+        "label": label,
+        "url": f"/requests/{row.id}",
+    }
+
+
+async def start_request_from_conversation(db: Session, text: str):
+    """Runs the existing discovery/outreach pipeline with explicit truth states."""
+    parsed = understand_request(text)
+    parsed, applied_preferences = apply_confirmed_preferences(db, parsed, text)
+    row = Request(
+        raw_text=text, item=parsed["item"], area=parsed["area"], budget=parsed["budget"],
+        deadline=parsed["deadline"], status="DISCOVERING",
+    )
+    db.add(row); db.commit(); db.refresh(row)
+    log_event(db, row.id, "REQUEST_CREATED_FROM_CONVERSATION", text)
+    if applied_preferences:
+        log_event(db, row.id, "CONFIRMED_PREFERENCES_APPLIED", " | ".join(applied_preferences))
+
+    discovered = await discover_businesses(text, parsed.get("area"))
+    log_event(db, row.id, "DISCOVERY_DONE", str(len(discovered)))
+    sent_count = 0
+    queued_count = 0
+    for candidate in discovered:
+        biz = None
+        if candidate.get("external_id"):
+            biz = db.query(Business).filter(Business.external_id == candidate["external_id"]).first()
+        if not biz:
+            biz = Business(
+                external_id=candidate.get("external_id"), name=candidate["name"],
+                website=candidate.get("website"), phone=candidate.get("phone"),
+                source=candidate.get("source", "discovery"),
+            )
+            db.add(biz); db.commit(); db.refresh(biz)
+        reach = build_reachability(candidate)
+        log_event(db, row.id, "REACHABILITY_CHECK", f"{biz.name}|reachable={reach['reachable']}|channel={reach.get('channel')}")
+        if reach["reachable"]:
+            db.add(MerchantLink(token=new_token(), request_id=row.id, business_id=biz.id, status="CREATED"))
+            db.commit()
+        attempt = route_request_to_business(db, row, biz)
+        if attempt.status in ("SENT", "PENDING"):
+            delivery = deliver_request(db, attempt)
+            if delivery.status == "SENT":
+                sent_count += 1
+                log_event(db, row.id, "OUTREACH_SENT_CONFIRMED", biz.name)
+            elif delivery.status == "QUEUED":
+                queued_count += 1
+                log_event(db, row.id, "OUTREACH_QUEUED", biz.name)
+
+    if sent_count:
+        row.status = "WAITING_OFFERS"
+        log_event(db, row.id, "WAITING_FOR_REAL_OFFERS", f"sent={sent_count}")
+    elif discovered:
+        row.status = "SUPPLY_FOUND_NO_CHANNEL"
+        log_event(db, row.id, "OUTREACH_NOT_CONFIRMED", f"found={len(discovered)};queued={queued_count};sent=0")
+    else:
+        row.status = "NO_REACHABLE_SUPPLY"
+        log_event(db, row.id, "REQUEST_FAILED", "NO_REACHABLE_SUPPLY")
+    db.commit(); db.refresh(row)
+    return row
+
+
+@app.post("/api/chat")
+async def chat_turn(payload: ChatTurnInput, db: Session = Depends(get_db)):
+    text = " ".join(payload.message.split())
+    if not text:
+        raise HTTPException(422, "Message cannot be empty")
+
+    thread = None
+    if payload.thread_id:
+        thread = db.query(ConversationThread).filter(ConversationThread.id == payload.thread_id).first()
+        if thread and thread.customer_ref != payload.customer_ref:
+            raise HTTPException(403, "Conversation does not belong to this customer")
+    if not thread:
+        locale = resolve_locale(payload.locale)
+        thread = ConversationThread(
+            id=str(uuid.uuid4()), customer_ref=payload.customer_ref, locale=locale.locale,
+            language=locale.language, region=locale.region, currency=locale.currency,
+        )
+        db.add(thread); db.commit(); db.refresh(thread)
+
+    history_rows = db.query(ConversationMessage).filter(
+        ConversationMessage.thread_id == thread.id
+    ).order_by(ConversationMessage.id.desc()).limit(20).all()
+    history = [{"role": r.role.lower(), "content": r.content} for r in reversed(history_rows)]
+    active_cases = linked_case_context(db, thread.id)
+
+    user_message = ConversationMessage(thread_id=thread.id, role="USER", content=text)
+    db.add(user_message); db.commit(); db.refresh(user_message)
+
+    reply = await conversation_provider.respond(TurnContext(text, history, thread.locale, active_cases))
+    decision = gate_action(reply, active_cases)
+    action_status = "PROPOSED"
+    card = None
+    action_reason = decision.reason
+    linked_case = None
+
+    if reply.action.type == ActionType.NONE:
+        action_status = "BLOCKED"
+    elif decision.allowed and reply.action.type == ActionType.CREATE_REQUEST:
+        try:
+            request_row = await start_request_from_conversation(db, text)
+            link = ConversationCaseLink(thread_id=thread.id, case_type="REQUEST", case_id=request_row.id)
+            db.add(link); db.commit()
+            linked_case = {"type": "REQUEST", "id": request_row.id}
+            card = honest_request_card(request_row)
+            action_status = "EXECUTED"
+        except Exception as exc:
+            db.rollback()
+            action_status = "FAILED"
+            action_reason = f"Request pipeline failed safely: {type(exc).__name__}"
+    elif decision.allowed:
+        action_status = "EXECUTED"
+        linked_case = {"type": reply.action.case_type, "id": reply.action.case_id}
+    else:
+        action_status = "BLOCKED"
+
+    style_json = json.dumps(reply.style.__dict__, ensure_ascii=False)
+    provider_json = json.dumps({"provider": reply.provider, "model": reply.model, "degraded": reply.degraded}, ensure_ascii=False)
+    assistant_message = ConversationMessage(
+        thread_id=thread.id, role="ASSISTANT", content=reply.text, intent=reply.intent.value,
+        style_metadata=style_json, provider_metadata=provider_json,
+    )
+    db.add(assistant_message); db.commit(); db.refresh(assistant_message)
+    db.add(ConversationAction(
+        thread_id=thread.id, message_id=user_message.id, action_type=reply.action.type.value,
+        status=action_status, reason=action_reason,
+        payload=json.dumps(reply.action.payload, ensure_ascii=False),
+    ))
+    thread.provider = reply.provider
+    thread.degraded_mode = reply.degraded
+    thread.language = reply.style.language
+    thread.updated_at = datetime.utcnow()
+    db.commit()
+
+    return {
+        "thread_id": thread.id,
+        "message": {"id": assistant_message.id, "role": "assistant", "content": reply.text},
+        "intent": reply.intent.value,
+        "style": reply.style.__dict__,
+        "provider": {"name": reply.provider, "model": reply.model, "degraded": reply.degraded},
+        "action": {"type": reply.action.type.value, "status": action_status, "reason": action_reason},
+        "linked_case": linked_case,
+        "card": card,
+    }
+
+
+@app.get("/api/conversations/{thread_id}")
+def conversation_history(thread_id: str, customer_ref: str = "anonymous", db: Session = Depends(get_db)):
+    thread = db.query(ConversationThread).filter(ConversationThread.id == thread_id).first()
+    if not thread:
+        raise HTTPException(404, "Conversation not found")
+    if thread.customer_ref != customer_ref:
+        raise HTTPException(403, "Conversation does not belong to this customer")
+    rows = db.query(ConversationMessage).filter(
+        ConversationMessage.thread_id == thread.id
+    ).order_by(ConversationMessage.id.asc()).all()
+    return {
+        "thread_id": thread.id,
+        "degraded": thread.degraded_mode,
+        "messages": [
+            {"id": row.id, "role": row.role.lower(), "content": row.content, "intent": row.intent}
+            for row in rows
+        ],
+        "cases": linked_case_context(db, thread.id),
+    }

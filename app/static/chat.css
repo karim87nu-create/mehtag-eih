@@ -1,7 +1,7 @@
 
 .chat-shell{padding-bottom:150px}
 .chat-top{margin-bottom:4px}
-.conversation-hero{padding:10px 0 4px}
+.conversation-hero{padding:18px 0 4px;min-height:110px}
 .presence{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:13px;padding:0 5px 12px}
 .chat-thread{display:flex;flex-direction:column;gap:12px}
 .chat-message{display:flex;align-items:flex-end;gap:9px;max-width:100%}
@@ -49,6 +49,7 @@
 .chat-send:disabled,.voice-button:disabled{opacity:.45}
 .composer-hint{font-size:12px;color:var(--muted);padding:4px 8px 1px;line-height:1.6}
 .ambient-strip{margin-top:28px}
+.home-cases{margin-top:14px;margin-bottom:22px}
 .ambient-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;padding:0 4px}
 .ambient-title span{font-size:12px;color:var(--muted)}
 .ambient-list{display:flex;flex-direction:column;gap:8px}
@@ -89,6 +90,12 @@
 .request-bottom{margin-top:18px;text-align:center}
 .back-to-chat{color:var(--muted);text-decoration:none;font-size:14px}
 .hidden{display:none!important}
+.empty-thread{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:14px;padding:22px 5px 12px}
+.degraded-notice{margin-top:14px;padding:10px 13px;border-radius:14px;background:#fff7e7;color:#75551c;font-size:12px;line-height:1.7;border:1px solid #f0dfba}
+.chat-context-card{display:flex;flex-direction:column;gap:6px;margin:4px 45px 4px 0;padding:15px 17px;border-radius:19px;background:rgba(255,255,255,.72);border:1px solid rgba(255,255,255,.9);box-shadow:var(--shadow-sm);color:var(--ink);text-decoration:none}
+.chat-context-card small{color:var(--muted);font-size:12px}
+.chat-context-card b{font-size:14px;line-height:1.55}
+.chat-context-card span{color:var(--muted);font-size:12px}
 @keyframes chatIn{from{opacity:0;transform:translateY(9px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
 @keyframes chatDot{0%,60%,100%{transform:translateY(0);opacity:.35}30%{transform:translateY(-4px);opacity:1}}
 @keyframes micPulse{0%,100%{box-shadow:0 0 0 0 rgba(164,63,63,.08)}50%{box-shadow:0 0 0 10px rgba(164,63,63,.08)}}
