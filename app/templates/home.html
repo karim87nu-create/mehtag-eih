@@ -1,0 +1,35 @@
+
+<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/static/app.css"><title>محتاج إيه؟</title><link rel="manifest" href="/static/manifest.webmanifest">
+<meta name="theme-color" content="#171717">
+<script>if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("/static/sw.js"));}</script>
+</head>
+<body><main class="app"><div class="top"><a class="brand" href="/">محتاج إيه؟</a><a href="/privacy" class="small">الخصوصية</a></div>
+
+<section class="chatbox">
+<h1>قولّي محتاج إيه.</h1>
+<p class="muted">بدل ما تفكر تروح فين، قول المطلوب وأنا أكمّل معاك لحد النتيجة.</p>
+<form method="post" action="/requests">
+<textarea name="text" placeholder="مثال: عايز غسالة 9 كيلو كويسة في حدود 25 ألف وتوصل بكرة" required></textarea>
+<button class="full">إرسال</button></form>
+</section>
+
+{% if suggestions %}<h2>لقيت حاجة ممكن أتابعها</h2>
+{% for s in suggestions %}<div class="card"><b>{{ s.followup_intent }}</b><p class="muted">{{ s.raw_text }}</p>
+<div class="row"><form method="post" action="/detected/{{ s.id }}/accept"><button class="full">تابعها معايا</button></form>
+<form method="post" action="/detected/{{ s.id }}/dismiss"><button class="btn-light full">مش محتاج</button></form></div></div>{% endfor %}{% endif %}
+
+{% if followups %}<h2>أنا ورا الحاجات دي</h2>
+{% for f in followups %}<div class="card"><b>{{ f.case.title }}</b><p>{{ f.task.action }}</p><span class="badge">{{ f.task.due_at }}</span></div>{% endfor %}{% endif %}
+
+{% if open_cases %}<h2>متابع معاك</h2>
+{% for c in open_cases %}<a href="/cases/{{ c.id }}" style="text-decoration:none"><div class="card"><b>{{ c.status }}</b><p class="muted">اضغط لمتابعة الحالة</p></div></a>{% endfor %}{% endif %}
+
+{% if learned %}<h2>بدأت أفهمك</h2>
+{% for p in learned %}<div class="card"><b>{{ p.preference_value }}</b><p class="muted">لاحظت ده في {{ p.evidence_count }} تعاملات. أعتمده للمرة الجاية؟</p>
+<div class="row"><form method="post" action="/preferences/{{ p.id }}/confirm"><button class="full">أيوه</button></form>
+<form method="post" action="/preferences/{{ p.id }}/reject"><button class="btn-light full">لأ</button></form></div></div>{% endfor %}{% endif %}
+
+{% if memories %}<h2>حاجات خلصناها قبل كده</h2>
+{% for m in memories %}<div class="card"><p>{{ m.value }}</p><form method="post" action="/memory/{{ m.id }}/repeat"><button class="btn-light">كررها</button></form></div>{% endfor %}{% endif %}
+</main></body></html>

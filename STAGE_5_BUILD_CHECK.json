@@ -1,0 +1,10 @@
+{
+  "backend_compiles": true,
+  "pwa_manifest": true,
+  "service_worker": true,
+  "mobile_api": true,
+  "android_project": true,
+  "share_intent": true,
+  "notification_listener": true,
+  "docker": true
+}

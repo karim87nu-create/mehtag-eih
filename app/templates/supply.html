@@ -1,0 +1,29 @@
+
+<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>قلب السوق</title>
+<style>body{font-family:Arial;background:#f7f7f7;margin:0}.app{max-width:900px;margin:auto;padding:25px}
+.card{background:#fff;border:1px solid #e5e5e5;border-radius:18px;padding:16px;margin:12px 0}
+.badge{display:inline-block;background:#eee;border-radius:20px;padding:6px 10px;font-size:12px}
+small{color:#666}button,input,select{padding:10px;border-radius:10px;border:1px solid #ddd;margin:4px}</style><link rel="manifest" href="/static/manifest.webmanifest">
+<meta name="theme-color" content="#171717">
+<script>if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("/static/sw.js"));}</script>
+</head>
+<body><main class="app"><h1>قلب السوق — اختبار الوصول</h1>
+<p>الطلب يأتي أولًا. لا نفترض أن التاجر شريك، ولا نعتبر رقم الهاتف العام إذنًا للتواصل الآلي.</p>
+{% for r in rows %}<div class="card">
+<b>{{ r.biz.name }}</b> <span class="badge">{{ r.attempt.status }}</span>
+<p>{{ r.req.raw_text }}</p><small>القناة: {{ r.attempt.channel }} — {{ r.attempt.reason }}</small><br>
+<a href="/businesses/{{ r.biz.id }}/capability">سجل القدرة والنتائج</a>
+{% if r.attempt.status != "SENT" %}
+<form method="post" action="/businesses/{{ r.biz.id }}/activate">
+<select name="channel"><option>EMAIL</option><option>API</option><option>WEBHOOK</option><option>WHATSAPP_OPTED_IN</option></select>
+<input name="endpoint" placeholder="endpoint بعد موافقة التاجر" required>
+<button>تفعيل استقبال الطلبات القادمة</button></form>{% endif %}
+<form method="post" action="/reach/{{ r.attempt.id }}/deliver"><button>جرّب الإرسال عبر قناة مفعلة</button></form>
+<form method="post" action="/integrations/business/{{ r.biz.id }}">
+<select name="kind"><option>WEBHOOK</option><option>API</option><option>EMAIL</option><option>WHATSAPP_OPTED_IN</option></select>
+<input name="endpoint" placeholder="endpoint فعلي" required>
+<input name="consent_basis" placeholder="أساس السماح/الموافقة">
+<button>إضافة قناة فعلية</button></form>
+</div>{% else %}<p>لا توجد محاولات بعد.</p>{% endfor %}
+</main></body></html>

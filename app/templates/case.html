@@ -1,0 +1,62 @@
+<!doctype html><html lang="ar" dir="rtl"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>متابعها معاك</title><style>
+*{box-sizing:border-box}body{margin:0;font-family:Arial;background:#fafafa;color:#171717}
+.app{max-width:520px;margin:auto;padding:30px 18px 90px}.card{background:white;border:1px solid #e8e8e8;border-radius:24px;padding:22px}
+.status{background:#f1f1f1;border-radius:15px;padding:14px;margin:16px 0}.btn{width:100%;padding:13px;border:0;border-radius:14px;margin:6px 0;font-size:16px}
+.muted{color:#666;line-height:1.7}.issue{border-top:1px solid #eee;margin-top:18px;padding-top:16px}
+textarea,input{width:100%;padding:12px;border:1px solid #ddd;border-radius:12px;margin:6px 0}
+.amend{background:#fff4e8;border-radius:15px;padding:14px;margin:15px 0}.dev{margin-top:28px;padding-top:18px;border-top:1px solid #eee}
+</style><link rel="manifest" href="/static/manifest.webmanifest">
+<meta name="theme-color" content="#171717">
+<script>if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("/static/sw.js"));}</script>
+</head><body><main class="app"><div class="card">
+<a href="/">← الرئيسية</a><h1>متابعها معاك</h1><p>{{ req.raw_text }}</p>
+<div class="status"><b>{{ case.status }}</b><br><span class="muted">المتوقع: {{ case.expected_at or "—" }}</span></div>
+
+{% if amendment %}
+<div class="amend"><b>المنفذ طالب تعديل الاتفاق</b>
+<p>{{ amendment.reason }}</p>
+{% if amendment.new_price %}<p>السعر الجديد: {{ amendment.new_price }} ج</p>{% endif %}
+{% if amendment.new_eta %}<p>الموعد الجديد: {{ amendment.new_eta }}</p>{% endif %}
+<form method="post" action="/amendments/{{ amendment.id }}/decision">
+<button class="btn" name="decision" value="approve">موافق</button>
+<button class="btn" name="decision" value="reject">مش موافق</button></form></div>
+{% endif %}
+
+{% if case.status == "COMPLETED_PENDING_CONFIRMATION" %}
+<h3>اتنفذت زي ما اتفقنا؟</h3>
+<form method="post" action="/cases/{{ case.id }}/outcome">
+<button class="btn" name="result" value="ok">نعم، تمام</button>
+<button class="btn" name="result" value="issue">فيه مشكلة</button></form>
+<form method="post" action="/cases/{{ case.id }}/issue" class="issue">
+<textarea name="issue_text" placeholder="قولّي المشكلة باختصار" required></textarea><button class="btn">سجل المشكلة وخليك وراها</button></form>
+{% elif case.status == "VERIFIED_OUTCOME" %}<h3>✓ النتيجة اتأكدت واتقفلت.</h3>
+{% elif case.status in ["ISSUE_OPEN","RESOLVED_PENDING_CONFIRMATION"] %}
+<h3>المشكلة لسه جزء من نفس العملية.</h3>
+{% endif %}
+
+{% for i in issues %}
+<div class="issue"><b>المشكلة:</b> {{ i.issue_text }}<br><span class="muted">{{ i.status }}</span>
+{% if i.resolution_text %}<p><b>الحل المقترح:</b> {{ i.resolution_text }}</p>{% endif %}
+{% if i.status == "OPEN" %}
+<form method="post" action="/issues/{{ i.id }}/resolve"><textarea name="resolution_text" placeholder="محاكاة رد/حل المنفذ" required></textarea><button class="btn">تسجيل حل مقترح</button></form>
+{% elif i.status == "RESOLVED_PENDING_CONFIRMATION" %}
+<form method="post" action="/issues/{{ i.id }}/confirm"><button class="btn" name="result" value="ok">اتحلت فعلًا</button><button class="btn" name="result" value="no">لسه</button></form>
+{% endif %}</div>{% endfor %}
+
+<div class="dev"><b>أحداث التنفيذ — Prototype</b>
+<form method="post" action="/cases/{{ case.id }}/event">
+<button class="btn" name="event_type" value="IN_PROGRESS">بدأ التنفيذ</button>
+<button class="btn" name="event_type" value="OUT_FOR_DELIVERY">خرج للتوصيل</button>
+<button class="btn" name="event_type" value="COMPLETED">تم التنفيذ</button>
+<button class="btn" name="event_type" value="ISSUE">مشكلة</button></form>
+{% if offer %}
+<h4>محاكاة طلب تغيير من المنفذ</h4>
+<form method="post" action="/offers/{{ offer.id }}/amend">
+<input type="number" step="0.01" name="new_price" placeholder="سعر جديد — اختياري">
+<input name="new_eta" placeholder="موعد جديد — اختياري">
+<textarea name="reason" placeholder="سبب التغيير" required></textarea>
+<button class="btn">إرسال التعديل للعميل</button></form>
+{% endif %}
+</div></div></main></body></html>

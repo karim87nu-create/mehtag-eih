@@ -1,0 +1,9 @@
+<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>تأكيد التنفيذ</title><style>*{box-sizing:border-box}body{margin:0;font-family:Arial;background:#fafafa}.app{max-width:520px;margin:auto;padding:35px 18px}.card{background:white;border:1px solid #e8e8e8;border-radius:24px;padding:22px}h1{font-size:26px}.price{font-size:30px;font-weight:bold;margin:20px 0}.muted{color:#666;line-height:1.7}.btn{width:100%;border:0;border-radius:15px;padding:15px;font-size:17px;margin-top:18px}</style><link rel="manifest" href="/static/manifest.webmanifest">
+<meta name="theme-color" content="#171717">
+<script>if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("/static/sw.js"));}</script>
+</head>
+<body><main class="app"><div class="card"><h1>راجع ونفّذ</h1><p class="muted">{{ req.raw_text }}</p><div class="price">{{ "%.0f"|format(offer.price) }} ج</div><p>موعد التنفيذ: {{ offer.eta }}</p>
+<p class="muted">في النسخة الحقيقية هنا سيظهر السعر + رسم الخدمة بوضوح قبل الدفع.</p>
+<form method="post" action="/cases/{{ case.id }}/demo-payment"><button class="btn">محاكاة تأكيد الدفع</button></form>
+</div></main></body></html>

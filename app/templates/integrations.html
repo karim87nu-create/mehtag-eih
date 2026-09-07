@@ -1,0 +1,11 @@
+
+<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>التكاملات</title><style>body{font-family:Arial;background:#f7f7f7}.app{max-width:850px;margin:auto;padding:25px}.card{background:white;border:1px solid #eee;border-radius:18px;padding:16px;margin:12px 0}</style><link rel="manifest" href="/static/manifest.webmanifest">
+<meta name="theme-color" content="#171717">
+<script>if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("/static/sw.js"));}</script>
+</head>
+<body><main class="app"><h1>التكاملات والتنفيذ</h1>
+<div class="card"><b>قاعدة النسخة:</b><p>لا نكتب SENT أو PAID إلا لو فيه Transport/Payment Provider فعلي. أي شيء غير موصل يظل QUEUED / SIMULATION بوضوح.</p></div>
+<h2>قنوات مفعلة</h2>{% for e in eps %}<div class="card">{{ e.kind }} — {{ e.endpoint }}<br><small>{{ e.status }} | {{ e.consent_basis or "—" }}</small></div>{% else %}<p>لسه مفيش قناة خارجية مفعلة.</p>{% endfor %}
+<h2>محاولات الدفع</h2>{% for p in pays %}<div class="card">{{ p.amount }} {{ p.currency }} — رسم الخدمة {{ p.service_fee }}<br><small>{{ p.provider }} / {{ p.status }}</small></div>{% else %}<p>لا توجد.</p>{% endfor %}
+</main></body></html>

@@ -1,0 +1,13 @@
+{
+  "checks": {
+    "shared UI": true,
+    "ops dashboard": true,
+    "privacy": true,
+    "audit model": true,
+    "consent model": true,
+    "health route": true,
+    "smoke tests": true,
+    "python compile": true
+  },
+  "compile_status": "ok"
+}

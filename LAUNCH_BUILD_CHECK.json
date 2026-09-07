@@ -1,0 +1,9 @@
+{
+  "android_runtime_backend_config": true,
+  "share_intent": true,
+  "notification_listener": true,
+  "github_apk_workflow": true,
+  "docker": true,
+  "render_blueprint": true,
+  "backend_compiles": true
+}

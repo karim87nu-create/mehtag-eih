@@ -1,0 +1,9 @@
+{
+  "render_free_web": true,
+  "render_free_postgres": true,
+  "no_paid_disk": true,
+  "postgres_driver": true,
+  "github_apk_workflow": true,
+  "database_env": true,
+  "python_compile": true
+}

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head><meta charset="utf-8"><title>لوحة الاختبار</title>
+<style>
+body{font-family:Arial;background:#f3f3f3}.wrap{max-width:1000px;margin:30px auto}.req{background:white;padding:20px;margin:18px 0;border-radius:14px}.offer{background:#eef7ee;padding:10px;margin:8px 0;border-radius:8px}.evt{font-size:13px;border-bottom:1px solid #eee;padding:5px}
+</style>
+<link rel="manifest" href="/static/manifest.webmanifest">
+<meta name="theme-color" content="#171717">
+<script>if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("/static/sw.js"));}</script>
+</head>
+<body><div class="wrap">
+<h1>لوحة Gate A</h1>
+<a href="/">طلب جديد</a>
+{% for r, offers, events in all_data %}
+<div class="req">
+<h3>#{{ r.id }} — {{ r.status }}</h3>
+<p>{{ r.raw_text }}</p>
+<h4>العروض</h4>
+{% if offers %}
+{% for o,b in offers %}
+<div class="offer"><b>{{ b.name }}</b> — {{ o.price }} — {{ o.eta }} {% if o.notes %}— {{ o.notes }}{% endif %}</div>
+{% endfor %}
+{% else %}<p>لا توجد عروض.</p>{% endif %}
+<details><summary>Events</summary>
+{% for e in events %}<div class="evt">{{ e.created_at }} — {{ e.event_type }} — {{ e.detail or "" }}</div>{% endfor %}
+</details>
+</div>
+{% endfor %}
+</div></body></html>

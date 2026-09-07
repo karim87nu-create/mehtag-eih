@@ -1,0 +1,9 @@
+<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ابعتلي</title><style>*{box-sizing:border-box}body{font-family:Arial;background:#fafafa;margin:0}.app{max-width:520px;margin:auto;padding:30px 18px}.card{background:white;border:1px solid #e8e8e8;border-radius:22px;padding:20px}textarea,input{width:100%;padding:13px;margin:8px 0 15px;border:1px solid #ddd;border-radius:12px;font-size:16px}.btn{width:100%;border:0;border-radius:14px;padding:14px;font-size:17px}.muted{color:#666;line-height:1.6}</style><link rel="manifest" href="/static/manifest.webmanifest">
+<meta name="theme-color" content="#171717">
+<script>if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("/static/sw.js"));}</script>
+</head>
+<body><main class="app"><a href="/">← الرئيسية</a><div class="card"><h1>ابعتلي الحاجة</h1><p class="muted">في التطبيق الحقيقي Share من التطبيقات الأخرى هيوصل المحتوى هنا مباشرة. في الـPrototype الصق النص أو تفاصيل الطلب.</p>
+<form method="post" action="/share"><label>التفاصيل</label><textarea name="source_text" required placeholder="مثال: طلب غسالة — التسليم المتوقع الخميس">{{ shared_text or "" }}</textarea>
+<label>اسم مختصر</label><input name="title" placeholder="الغسالة"><label>الموعد المتوقع</label><input name="expected_at" placeholder="الخميس">
+<button class="btn">تابعها معايا</button></form></div></main></body></html>

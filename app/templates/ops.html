@@ -1,0 +1,20 @@
+
+<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/static/app.css"><title>لوحة التشغيل</title><link rel="manifest" href="/static/manifest.webmanifest">
+<meta name="theme-color" content="#171717">
+<script>if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("/static/sw.js"));}</script>
+</head><body>
+<main class="app wide"><div class="top"><a class="brand" href="/ops">لوحة التشغيل</a><nav><a href="/">العميل</a><a href="/supply">السوق</a><a href="/integrations">التكاملات</a></nav></div>
+<div class="grid">
+<div class="card"><div class="stat">{{ health.requests }}</div><span class="muted">إجمالي الطلبات</span></div>
+<div class="card"><div class="stat">{{ health.open_cases }}</div><span class="muted">حالات مفتوحة</span></div>
+<div class="card"><div class="stat">{{ health.pending_followups }}</div><span class="muted">متابعات معلقة</span></div>
+<div class="card"><div class="stat">{{ health.active_integrations }}</div><span class="muted">قنوات مفعلة</span></div>
+</div>
+
+<h2>أحدث الطلبات</h2><div class="grid">{% for r in requests_ %}<div class="card"><b>#{{ r.id }}</b><p>{{ r.raw_text }}</p><span class="badge">{{ r.status }}</span></div>{% endfor %}</div>
+
+<h2>الحالات</h2>{% for x in cases %}<div class="card"><b>#{{ x.case.id }} — {{ x.case.status }}</b><p>{{ x.req.raw_text if x.req else "—" }}</p><a href="/cases/{{ x.case.id }}">فتح الحالة</a></div>{% endfor %}
+
+<h2>سجل النظام</h2>{% for a in audits %}<div class="card small"><b>{{ a.action }}</b> — {{ a.entity_type }} {{ a.entity_id or "" }}<br><span class="muted">{{ a.detail or "" }} | {{ a.created_at }}</span></div>{% else %}<p class="muted">لسه مفيش Audit Events.</p>{% endfor %}
+</main></body></html>
