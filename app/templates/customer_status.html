@@ -1,34 +1,55 @@
-<!doctype html><html lang="ar" dir="rtl"><head>
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>لقيتلك الأنسب</title>
-<style>
-*{box-sizing:border-box}body{margin:0;font-family:Arial;background:#fafafa;color:#171717}
-.app{max-width:520px;margin:auto;padding:24px 18px 100px}.back{text-decoration:none;color:#555}
-.ask{margin-top:28px;background:#eee;padding:14px 16px;border-radius:18px;line-height:1.6}
-.card{margin-top:18px;background:white;border:1px solid #e8e8e8;border-radius:22px;padding:20px}
-.card h1{font-size:25px;margin:0 0 12px}.price{font-size:31px;font-weight:700;margin:14px 0}
-.meta,.muted{color:#555;line-height:1.8}.why,.fees{margin-top:15px;background:#f4f4f4;padding:13px;border-radius:14px}
-.row{display:flex;justify-content:space-between;margin:8px 0}.total{font-weight:bold;border-top:1px solid #ddd;padding-top:10px}
-.primary{width:100%;margin-top:18px;border:0;border-radius:15px;padding:15px;font-size:18px}
-.secondary{display:block;text-align:center;margin-top:14px;color:#555;text-decoration:none}
-.wait{margin-top:20px;background:white;border:1px solid #e8e8e8;border-radius:20px;padding:20px}
-</style><link rel="manifest" href="/static/manifest.webmanifest">
-<meta name="theme-color" content="#171717">
-<script>if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("/static/sw.js"));}</script>
-</head><body><main class="app">
-<a class="back" href="/">← الرئيسية</a><div class="ask">{{ req.raw_text }}</div>
-{% if best %}
-<div class="card"><h1>لقيتلك الأنسب</h1>
-<div class="price">{{ "%.0f"|format(best.price) }} ج</div>
-<div class="meta">موعد التنفيذ: {{ best.eta }}<br>المنفذ: {{ best_biz.name }}</div>
-{% if best_reasons %}<div class="why"><b>ليه اخترته؟</b>{% for reason in best_reasons %}<div>• {{ reason }}</div>{% endfor %}</div>{% endif %}
-<div class="fees">
-<div class="row"><span>التنفيذ</span><span>{{ "%.0f"|format(best.price) }} ج</span></div>
-<div class="row"><span>خدمة «خلّصهالي»</span><span>{{ "%.0f"|format(service_fee) }} ج</span></div>
-<div class="row total"><span>الإجمالي</span><span>{{ "%.0f"|format(best.price + service_fee) }} ج</span></div>
-</div>
-<form method="post" action="/requests/{{ req.id }}/select/{{ best.id }}"><button class="primary">خلّصهالي</button></form>
-{% if alternatives > 0 %}<a class="secondary" href="#">وريني اختيار تاني ({{ alternatives }})</a>{% endif %}
-</div>
-{% else %}<div class="wait"><h1>متابعها معاك.</h1><p class="muted">لسه بدور على تنفيذ مؤكد ومطابق لطلبك.</p></div>{% endif %}
-</main></body></html>
+<title>حالة طلبك</title><link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main class="app">
+  <div class="top"><a class="brand" href="/">محتاج إيه؟</a><a class="small" href="/">الرئيسية</a></div>
+  <div class="user-bubble">{{ req.raw_text }}</div>
+
+  {% if best %}
+  <section class="offer-card">
+    <div class="eyebrow"><span class="eyebrow-dot"></span> اختيار مطابق أكتر لطلبك</div>
+    <h1>لقيتلك الأنسب</h1>
+    <div class="price">{{ "%.0f"|format(best.price) }} ج</div>
+
+    <div class="meta-grid">
+      <div class="meta-box"><span>موعد التنفيذ</span><b>{{ best.eta }}</b></div>
+      <div class="meta-box"><span>المنفذ</span><b>{{ best_biz.name }}</b></div>
+    </div>
+
+    {% if best_reasons %}
+    <div class="why"><b>ليه اخترته؟</b>{% for reason in best_reasons %}<div>• {{ reason }}</div>{% endfor %}</div>
+    {% endif %}
+
+    <div class="fees">
+      <div class="fee-row"><span>التنفيذ</span><span>{{ "%.0f"|format(best.price) }} ج</span></div>
+      <div class="fee-row"><span>خدمة خلّصهالي</span><span>{{ "%.0f"|format(service_fee) }} ج</span></div>
+      <div class="fee-row total"><span>الإجمالي</span><span>{{ "%.0f"|format(best.price + service_fee) }} ج</span></div>
+    </div>
+
+    <form id="selectForm" method="post" action="/requests/{{ req.id }}/select/{{ best.id }}">
+      <button id="selectBtn" class="primary" style="width:100%;margin-top:18px">خلّصهالي</button>
+    </form>
+    {% if alternatives > 0 %}
+    <div class="footer-note">فيه {{ alternatives }} اختيار تاني متاح للمقارنة.</div>
+    {% endif %}
+  </section>
+  {% else %}
+  <section class="stage-shell wait-card">
+    <div class="spinner"></div>
+    <h1>لسه بدور.</h1>
+    <p class="muted">مستني عرض فعلي ومطابق قبل ما أقدمهولك.</p>
+  </section>
+  {% endif %}
+</main>
+
+<script>
+(function(){
+  const f=document.getElementById("selectForm"),b=document.getElementById("selectBtn");
+  if(f&&b)f.addEventListener("submit",()=>{b.classList.add("loading");b.disabled=true;b.textContent="بأكد اختيارك"});
+})();
+</script>
+</body></html>

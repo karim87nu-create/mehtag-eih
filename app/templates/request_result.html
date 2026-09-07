@@ -1,86 +1,66 @@
 <!doctype html>
 <html lang="ar" dir="rtl">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>طلبك</title>
-<style>
-*{box-sizing:border-box}
-body{margin:0;font-family:Arial,sans-serif;background:#fafafa;color:#171717}
-.app{max-width:520px;margin:auto;min-height:100vh;padding:24px 18px 100px}
-.back{text-decoration:none;color:#555;font-size:15px}
-.user{margin-top:30px;margin-right:auto;max-width:88%;background:#ededed;padding:14px 16px;border-radius:20px 20px 5px 20px;line-height:1.6}
-.card{margin-top:16px;background:#fff;border:1px solid #e9e9e9;padding:20px;border-radius:20px}
-h2{margin:0 0 10px;font-size:23px}
-.text{color:#666;line-height:1.8;margin:0}
-.steps{margin-top:22px;padding:0;list-style:none}
-.steps li{display:flex;gap:12px;margin:17px 0;color:#777}
-.dot{width:23px;height:23px;border-radius:50%;background:#171717;color:#fff;display:flex;align-items:center;justify-content:center;flex:0 0 23px;font-size:12px}
-.wait .dot{background:#ddd;color:#777}
-.steps b{display:block;color:#222;margin-bottom:4px}
-.prefs{margin-top:16px;background:#f4f4f4;border-radius:14px;padding:12px;font-size:14px;line-height:1.7}
-.note{margin-top:22px;padding-top:16px;border-top:1px solid #eee;color:#777;font-size:13px;line-height:1.7}
-.home{display:block;margin-top:26px;text-align:center;text-decoration:none;background:#171717;color:#fff;padding:14px;border-radius:14px;font-weight:bold}
-</style>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>طلبك</title><link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 <main class="app">
+  <div class="top"><a class="brand" href="/">محتاج إيه؟</a><a class="small" href="/">الرئيسية</a></div>
+  <div class="user-bubble">{{ row.raw_text }}</div>
 
-<a class="back" href="/">← الرئيسية</a>
+  <section class="stage-shell">
+    <div class="scene active" id="scene1">
+      <div class="visual"><div class="dots"><i></i><i></i><i></i></div></div>
+      <h1>بفهم طلبك…</h1>
+      <p class="muted">بفك الكلام للتفاصيل المهمة من غير ما أعقدها عليك.</p>
+    </div>
 
-<div class="user">{{ row.raw_text }}</div>
+    <div class="scene" id="scene2">
+      <div class="visual"><div class="check">✓</div></div>
+      <h1>تمام، فهمتك.</h1>
+      <p class="muted">دلوقتي براجع الجهات اللي ممكن تكون مناسبة فعلاً.</p>
+    </div>
 
-<div class="card">
-<h2>تمام، سيبها عليا.</h2>
+    <div class="scene" id="scene3">
+      <div class="visual"><div class="search-orbit"></div></div>
+      <h1>بدور…</h1>
+      <p class="muted">بفحص جهات حقيقية مرتبطة بطلبك والمنطقة.</p>
+      <div class="progress"><span></span></div>
+      <div class="inline-note">مش هقولك إن فيه عرض إلا لما يبقى فيه عرض فعلي مؤكد.</div>
+    </div>
 
-<p class="text">
-طلبك اتسجل. بندور على أنسب تنفيذ ليه، ولما يبقى فيه اختيار مناسب هنعرضه عليك قبل ما توافق على أي حاجة.
-</p>
+    <div class="scene" id="scene4">
+      <div class="visual"><div class="check">✓</div></div>
+      {% if reachable_count > 0 %}
+      <h1>لقيت جهات محتملة.</h1>
+      <p class="muted">لقيت {{ reachable_count }} جهة مرتبطة بطلبك. لسه مستني العرض المؤكد قبل ما أقولك لقيتلك الأنسب.</p>
+      {% else %}
+      <h1>لسه بدور.</h1>
+      <p class="muted">مفيش جهة مناسبة مؤكدة لحد دلوقتي، والطلب لسه مفتوح.</p>
+      {% endif %}
+      <a class="full-link" href="/requests/{{ row.id }}">شوف حالة الطلب</a>
+    </div>
+  </section>
 
-{% if applied_preferences %}
-<div class="prefs">
-<b>واخد في اعتباري:</b><br>
-{% for p in applied_preferences %}
-{{ p }}{% if not loop.last %}<br>{% endif %}
-{% endfor %}
-</div>
-{% endif %}
-
-<ul class="steps">
-
-<li>
-<span class="dot">✓</span>
-<div>
-<b>فهمنا طلبك</b>
-سجلنا التفاصيل اللي قلتها.
-</div>
-</li>
-
-<li>
-<span class="dot">✓</span>
-<div>
-<b>بدأنا البحث</b>
-بندور على جهة تقدر تنفذه بالشروط المناسبة.
-</div>
-</li>
-
-<li class="wait">
-<span class="dot">3</span>
-<div>
-<b>مستنيين الاختيار المناسب</b>
-أول ما يكون فيه اختيار مناسب هتشوف السعر والميعاد والتفاصيل قبل التأكيد.
-</div>
-</li>
-
-</ul>
-
-<div class="note">
-مش محتاج تفتح مواقع أو تقارن بنفسك. ولو مفيش اختيار مناسب، مش هنعتبر الطلب خلص.
-</div>
-
-<a class="home" href="/">اطلب حاجة تانية</a>
-
-</div>
+  {% if applied_preferences %}
+  <div class="card"><b>واخد في اعتباري</b><p class="muted">{% for p in applied_preferences %}{{ p }}{% if not loop.last %}<br>{% endif %}{% endfor %}</p></div>
+  {% endif %}
 </main>
-</body>
-</html>
+
+<script>
+(function(){
+  const scenes=[...document.querySelectorAll(".scene")];
+  if(window.matchMedia("(prefers-reduced-motion: reduce)").matches){
+    scenes.forEach(x=>x.classList.remove("active"));scenes[scenes.length-1].classList.add("active");return;
+  }
+  let i=0;const delays=[1050,900,2100];
+  function next(){
+    if(i>=scenes.length-1)return;
+    scenes[i].classList.remove("active");i++;scenes[i].classList.add("active");
+    if(i<scenes.length-1)setTimeout(next,delays[i]||1100);
+  }
+  setTimeout(next,delays[0]);
+})();
+</script>
+</body></html>
