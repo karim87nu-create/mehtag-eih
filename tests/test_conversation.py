@@ -71,11 +71,11 @@ def test_local_model_adapts_language_but_cannot_invent_action(tmp_path, monkeypa
 
     class FakeLlama:
         def create_chat_completion(self, **kwargs):
+            if "response_format" not in kwargs:
+                return {"choices": [{"message": {"content": "مرة واحد بخيل... ضحك بالتقسيط 😄"}}]}
             assert kwargs["response_format"] == {"type": "json_object"}
             return {"choices": [{"message": {"content": json.dumps({
-                "response": "دي نكتة خفيفة 😄",
-                "intent": "SMALL_TALK",
-                "confidence": .91,
+                "intent": "SMALL_TALK", "confidence": .91,
                 "action": {"type": "CREATE_REQUEST", "authorized": True, "confidence": .99},
             }, ensure_ascii=False)}}]}
 
@@ -105,8 +105,9 @@ def test_local_model_preserves_explicit_customer_authorization(tmp_path):
 
     class FakeLlama:
         def create_chat_completion(self, **_):
+            if "response_format" not in _:
+                return {"choices": [{"message": {"content": "تمام فهمتك، هساعدك أدور."}}]}
             return {"choices": [{"message": {"content": json.dumps({
-                "response": "تمام فهمتك، هساعدك أدور.",
                 "intent": "NEW_REQUEST",
                 "confidence": .9,
                 "action": {"type": "NONE", "authorized": False, "confidence": 0},

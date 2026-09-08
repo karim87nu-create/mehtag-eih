@@ -268,12 +268,15 @@ class OpenAICompatibleProvider(ConversationProvider):
 
 
 LOCAL_SYSTEM_PROMPT = """You are Ma'ak (معاك), a useful personal service companion, not a call-centre bot.
-Reply naturally in the language and style of the latest user message: Egyptian Arabic, English, or a comfortable Arabic-English mix. Match mood, urgency and formality. Be concise unless detail is useful. You can answer general questions, chat, and tell jokes. Never start with canned phrases such as "تمام فهمتك". Do not invent facts, prices, merchant contact, offers, bookings, payments or completed actions.
+Answer the latest user directly and naturally in their language and style: Egyptian Arabic, English, or a comfortable Arabic-English mix. Match mood, urgency and formality. Be concise unless detail helps. Never begin with canned acknowledgements such as "تمام فهمتك", "أنا هنا احكي براحتك", "Got it", or "I understand".
 
-Return only one valid JSON object:
-{"response":"...","intent":"SMALL_TALK|NEW_REQUEST|CONTINUATION|EXTERNAL_EVENT_FOLLOWUP|PROBLEM|DECISION|GENERAL_QUESTION","confidence":0.0,"action":{"type":"NONE|CREATE_REQUEST|FOLLOW_CASE|RECORD_PROBLEM","authorized":false,"confidence":0.0,"case_id":null,"case_type":null,"payload":{}}}
+You can answer general questions, chat, and tell jokes. If asked for a joke, tell a complete joke with its punchline; do not merely announce that a joke follows. Do not mention internal classifications or JSON. Do not invent facts, prices, merchant contact, offers, bookings, payments or completed actions. Discovery is not outreach; outreach is not an offer; an offer is not execution."""
 
-Use CREATE_REQUEST only when the user explicitly asks to start finding, booking, buying or arranging. Questions and discussion have action NONE. A suggestion is not authorization. Discovery is not outreach; outreach is not an offer; an offer is not execution. The server independently validates every action."""
+
+LOCAL_CLASSIFIER_PROMPT = """Classify the latest customer message for a service companion. Return only one valid JSON object:
+{"intent":"SMALL_TALK|NEW_REQUEST|CONTINUATION|EXTERNAL_EVENT_FOLLOWUP|PROBLEM|DECISION|GENERAL_QUESTION","confidence":0.0,"action":{"type":"NONE|CREATE_REQUEST|FOLLOW_CASE|RECORD_PROBLEM","authorized":false,"confidence":0.0,"case_id":null,"case_type":null,"payload":{}}}
+
+Use CREATE_REQUEST only when the customer explicitly asks to start finding, booking, buying, ordering or arranging. Questions, jokes, greetings, discussion and suggestions have action NONE. Only link a case when its exact id and type are present in the supplied open cases. A suggestion is not authorization."""
 
 
 def _json_from_model(raw: str) -> dict[str, Any]:
@@ -371,7 +374,7 @@ class LocalGGUFProvider(ConversationProvider):
                 logger.info("Local conversation model loaded: %s", self.model)
         return self._llm
 
-    def _respond_sync(self, context: TurnContext) -> str:
+    def _respond_sync(self, context: TurnContext) -> tuple[str, str]:
         llm = self._load()
         messages: list[dict[str, str]] = [{"role": "system", "content": LOCAL_SYSTEM_PROMPT}]
         for item in context.history[-8:]:
@@ -387,26 +390,51 @@ class LocalGGUFProvider(ConversationProvider):
             latest += "\n\nOpen cases (reference only): " + json.dumps(case_summary, ensure_ascii=False)
         messages.append({"role": "user", "content": latest})
         with self._lock:
-            result = llm.create_chat_completion(
+            reply_result = llm.create_chat_completion(
                 messages=messages,
-                response_format={"type": "json_object"},
-                temperature=0.65,
-                top_p=0.9,
+                temperature=0.78,
+                top_p=0.92,
                 repeat_penalty=1.08,
-                max_tokens=280,
+                max_tokens=220,
             )
-        return str(result["choices"][0]["message"]["content"] or "")
+            control_result = llm.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": LOCAL_CLASSIFIER_PROMPT},
+                    {"role": "user", "content": json.dumps({
+                        "message": context.message,
+                        "open_cases": case_summary,
+                    }, ensure_ascii=False)},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.0,
+                max_tokens=140,
+            )
+        reply_text = str(reply_result["choices"][0]["message"]["content"] or "")
+        control_text = str(control_result["choices"][0]["message"]["content"] or "")
+        return reply_text, control_text
 
     async def respond(self, context: TurnContext) -> ProviderReply:
-        raw = await asyncio.to_thread(self._respond_sync, context)
-        data = _json_from_model(raw)
+        response_raw, control_raw = await asyncio.to_thread(self._respond_sync, context)
         baseline = await self._fallback.respond(context)
+        try:
+            data = _json_from_model(control_raw)
+        except (json.JSONDecodeError, ValueError):
+            logger.warning("Local model returned invalid control metadata; applying safe local policy")
+            data = {
+                "intent": baseline.intent.value,
+                "confidence": baseline.confidence,
+                "action": {
+                    "type": baseline.action.type.value,
+                    "authorized": baseline.action.authorized,
+                    "confidence": baseline.action.confidence,
+                },
+            }
         try:
             intent = Intent(str(data.get("intent", "")).upper())
         except ValueError:
             intent = baseline.intent
 
-        response_text = _remove_canned_opening(str(data.get("response") or ""))
+        response_text = _remove_canned_opening(response_raw)
         if not response_text:
             response_text = baseline.text
 
