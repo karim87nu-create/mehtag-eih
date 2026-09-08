@@ -5,7 +5,8 @@ from fastapi.testclient import TestClient
 import app.main as main_module
 from app.conversation import (
     ActionProposal, ActionType, FallbackProvider, Intent, ProviderReply,
-    LocalGGUFProvider, ResponseStyle, TurnContext, build_provider, gate_action,
+    LocalGGUFProvider, ResponseStyle, TurnContext, _local_system_prompt,
+    build_provider, gate_action,
 )
 from app.db import Base, engine
 from app.main import app
@@ -80,6 +81,19 @@ def test_local_model_adapts_language_but_cannot_invent_action(tmp_path, monkeypa
     assert reply.style.language == "ar"
     assert reply.action.authorized is False
     assert not gate_action(reply, []).allowed
+
+
+def test_mixed_food_language_is_disambiguated_and_action_stays_blocked():
+    context = TurnContext(
+        "محتاج recommendation لعشا light بس مش عايزك تطلب حاجة",
+        [], "ar-EG", [],
+    )
+    baseline = fallback(context.message)
+    prompt = _local_system_prompt(context, baseline)
+    assert "أكل خفيف" in prompt
+    assert "وليست إضاءة" in prompt
+    assert baseline.action.authorized is False
+    assert not gate_action(baseline, []).allowed
 
 
 def test_build_provider_prefers_existing_local_model(tmp_path, monkeypatch):

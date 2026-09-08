@@ -300,7 +300,19 @@ def _local_system_prompt(context: TurnContext, baseline: ProviderReply) -> str:
         "ممنوع تبدأ بـ: تمام فهمتك، أنا هنا احكي براحتك، حسنا. لا تذكر تصنيفات داخلية ولا JSON. "
         "لا تدّعي حجزًا أو شراءً أو دفعًا أو تواصلًا لم يحدث."
     )
-    return f"{identity}\n{task}\n{guardrail}"
+    code_switch_note = ""
+    if style.language == "mixed":
+        normalized_words = set(normalized.replace("؟", " ").replace("?", " ").split())
+        food_words = {"عشا", "عشاء", "اكل", "أكل", "وجبه", "وجبة", "food", "dinner", "meal"}
+        food_context = any(word in normalized for word in food_words)
+        if "light" in normalized_words and food_context:
+            code_switch_note = (
+                "\nتفسير مهم للجملة الحالية: كلمة light في سياق العشاء معناها أكل خفيف، "
+                "وليست إضاءة. وكلمة recommendation معناها اقتراح. اقترح وجبات فعلية فقط."
+            )
+        else:
+            code_switch_note = "\nافهم الكلمات الإنجليزية من سياق الجملة العربية، ولا تترجمها حرفيًا لمعنى بعيد."
+    return f"{identity}\n{task}\n{guardrail}{code_switch_note}"
 
 
 def _remove_canned_opening(text: str) -> str:
