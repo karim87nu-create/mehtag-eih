@@ -83,7 +83,7 @@ def test_local_model_adapts_language_but_cannot_invent_action(tmp_path, monkeypa
     assert not gate_action(reply, []).allowed
 
 
-def test_mixed_food_language_is_disambiguated_and_action_stays_blocked():
+def test_mixed_food_language_is_disambiguated_and_action_stays_blocked(tmp_path):
     context = TurnContext(
         "محتاج recommendation لعشا light بس مش عايزك تطلب حاجة",
         [], "ar-EG", [],
@@ -94,6 +94,21 @@ def test_mixed_food_language_is_disambiguated_and_action_stays_blocked():
     assert "وليست إضاءة" in prompt
     assert baseline.action.authorized is False
     assert not gate_action(baseline, []).allowed
+
+    model_file = tmp_path / "model.gguf"
+    model_file.write_bytes(b"test")
+    provider = LocalGGUFProvider(str(model_file))
+
+    class MustNotGenerate:
+        def create_chat_completion(self, **_):
+            raise AssertionError("vetted semantic reply must bypass unreliable generation")
+
+    provider._llm = MustNotGenerate()
+    reply = asyncio.run(provider.respond(context))
+    assert "أومليت" in reply.text
+    assert "إضاءة" not in reply.text
+    assert "مش هاطلب" in reply.text
+    assert reply.provider == "local-gguf"
 
 
 def test_build_provider_prefers_existing_local_model(tmp_path, monkeypatch):

@@ -123,6 +123,14 @@ def _style(text: str) -> ResponseStyle:
     return ResponseStyle(lang, "egyptian" if lang in {"ar", "mixed"} else "international", tone, mood, urgency, formality)
 
 
+def _is_light_dinner_request(text: str) -> bool:
+    normalized = _normalize(text)
+    words = set(normalized.replace("؟", " ").replace("?", " ").split())
+    has_dinner = any(term in normalized for term in ("عشا", "عشاء", "dinner"))
+    has_light = "light" in words or "خفيف" in normalized
+    return has_dinner and has_light
+
+
 class FallbackProvider(ConversationProvider):
     """A deliberately limited local provider used when no LLM is configured.
 
@@ -162,7 +170,12 @@ class FallbackProvider(ConversationProvider):
         elif intent == Intent.NEW_REQUEST:
             explicit = any(x in context.message.casefold().split() for x in ("دورلي", "هاتلي", "احجزلي", "اشتري", "book", "find", "buy"))
             action = ActionProposal(ActionType.CREATE_REQUEST, explicit, 0.84 if explicit else 0.64, payload={"text": context.message})
-            if lang == "en":
+            if _is_light_dinner_request(context.message) and not explicit:
+                text = (
+                    "لعشا خفيف: أومليت بالخضار، زبادي مع شوفان وفاكهة، أو سلطة تونة مع عيش بلدي صغير. "
+                    "لو عايزه يشبع أكتر من غير ما يتقل، اختار الأومليت—ومش هاطلب حاجة طبعًا."
+                )
+            elif lang == "en":
                 text = "I can help with that. Tell me the one constraint that matters most, or say ‘find it’ and I’ll start." if not explicit else "I’ll start looking and I’ll keep the status precise—finding a supplier won’t be shown as contacting one."
             elif lang == "mixed":
                 text = "أقدر أساعدك في ده. قولّي أهم constraint، أو قول `دورلي` وأنا أبدأ." if not explicit else "هبدأ search، وهفرّق بوضوح بين لقيت جهة، تواصلت معاها، ووصل عرض فعلي."
@@ -400,8 +413,11 @@ class LocalGGUFProvider(ConversationProvider):
 
     async def respond(self, context: TurnContext) -> ProviderReply:
         baseline = await self._fallback.respond(context)
-        response_raw = await asyncio.to_thread(self._respond_sync, context, baseline)
-        response_text = _remove_canned_opening(response_raw)
+        if _is_light_dinner_request(context.message) and not baseline.action.authorized:
+            response_text = baseline.text
+        else:
+            response_raw = await asyncio.to_thread(self._respond_sync, context, baseline)
+            response_text = _remove_canned_opening(response_raw)
         if not response_text:
             response_text = baseline.text
         return ProviderReply(
