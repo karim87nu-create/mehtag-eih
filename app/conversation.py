@@ -10,11 +10,14 @@ from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 import json
+import logging
 import os
 import unicodedata
 from typing import Any
 
 import httpx
+
+logger = logging.getLogger("maak.conversation")
 
 
 class Intent(str, Enum):
@@ -228,7 +231,13 @@ class OpenAICompatibleProvider(ConversationProvider):
                 headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
                 json=payload,
             )
-            response.raise_for_status()
+            if response.is_error:
+                try:
+                    error = response.json().get("error") or {}
+                    detail = f"{error.get('type') or 'api_error'}:{error.get('code') or 'unknown'}:{error.get('message') or ''}"
+                except (ValueError, AttributeError):
+                    detail = "non_json_error"
+                raise RuntimeError(f"OpenAI Responses API HTTP {response.status_code} {detail[:500]}")
             body = response.json()
         raw = body.get("output_text")
         if not raw:
@@ -266,8 +275,8 @@ class ResilientProvider(ConversationProvider):
         if self.primary:
             try:
                 return await self.primary.respond(context)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Primary conversation provider failed; using fallback: %s", str(exc)[:700])
         return await self.fallback.respond(context)
 
 
