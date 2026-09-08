@@ -1,5 +1,4 @@
 import asyncio
-import json
 
 from fastapi.testclient import TestClient
 
@@ -71,13 +70,8 @@ def test_local_model_adapts_language_but_cannot_invent_action(tmp_path, monkeypa
 
     class FakeLlama:
         def create_chat_completion(self, **kwargs):
-            if "response_format" not in kwargs:
-                return {"choices": [{"message": {"content": "مرة واحد بخيل... ضحك بالتقسيط 😄"}}]}
-            assert kwargs["response_format"] == {"type": "json_object"}
-            return {"choices": [{"message": {"content": json.dumps({
-                "intent": "SMALL_TALK", "confidence": .91,
-                "action": {"type": "CREATE_REQUEST", "authorized": True, "confidence": .99},
-            }, ensure_ascii=False)}}]}
+            assert "response_format" not in kwargs
+            return {"choices": [{"message": {"content": "مرة واحد بخيل... ضحك بالتقسيط 😄"}}]}
 
     provider._llm = FakeLlama()
     reply = asyncio.run(provider.respond(TurnContext("قولّي نكتة", [], "ar-EG", [])))
@@ -105,13 +99,7 @@ def test_local_model_preserves_explicit_customer_authorization(tmp_path):
 
     class FakeLlama:
         def create_chat_completion(self, **_):
-            if "response_format" not in _:
-                return {"choices": [{"message": {"content": "تمام فهمتك، هساعدك أدور."}}]}
-            return {"choices": [{"message": {"content": json.dumps({
-                "intent": "NEW_REQUEST",
-                "confidence": .9,
-                "action": {"type": "NONE", "authorized": False, "confidence": 0},
-            }, ensure_ascii=False)}}]}
+            return {"choices": [{"message": {"content": "تمام فهمتك، هساعدك أدور."}}]}
 
     provider._llm = FakeLlama()
     reply = asyncio.run(provider.respond(TurnContext("دورلي على سباك", [], "ar-EG", [])))

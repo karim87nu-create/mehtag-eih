@@ -273,37 +273,6 @@ Answer the latest user directly and naturally in their language and style: Egypt
 You can answer general questions, chat, and tell jokes. If asked for a joke, tell a complete joke with its punchline; do not merely announce that a joke follows. Do not mention internal classifications or JSON. Do not invent facts, prices, merchant contact, offers, bookings, payments or completed actions. Discovery is not outreach; outreach is not an offer; an offer is not execution."""
 
 
-LOCAL_CLASSIFIER_PROMPT = """Classify the latest customer message for a service companion. Return only one valid JSON object:
-{"intent":"SMALL_TALK|NEW_REQUEST|CONTINUATION|EXTERNAL_EVENT_FOLLOWUP|PROBLEM|DECISION|GENERAL_QUESTION","confidence":0.0,"action":{"type":"NONE|CREATE_REQUEST|FOLLOW_CASE|RECORD_PROBLEM","authorized":false,"confidence":0.0,"case_id":null,"case_type":null,"payload":{}}}
-
-Use CREATE_REQUEST only when the customer explicitly asks to start finding, booking, buying, ordering or arranging. Questions, jokes, greetings, discussion and suggestions have action NONE. Only link a case when its exact id and type are present in the supplied open cases. A suggestion is not authorization."""
-
-
-def _json_from_model(raw: str) -> dict[str, Any]:
-    """Accept plain JSON and defensively recover a single fenced/wrapped object."""
-    value = (raw or "").strip()
-    if value.startswith("```"):
-        value = value.removeprefix("```json").removeprefix("```")
-        value = value.removesuffix("```").strip()
-    try:
-        data = json.loads(value)
-    except json.JSONDecodeError:
-        start, end = value.find("{"), value.rfind("}")
-        if start < 0 or end <= start:
-            raise
-        data = json.loads(value[start:end + 1])
-    if not isinstance(data, dict):
-        raise ValueError("Local model response is not a JSON object")
-    return data
-
-
-def _bounded_float(value: Any, default: float = 0.5) -> float:
-    try:
-        return max(0.0, min(1.0, float(value)))
-    except (TypeError, ValueError):
-        return default
-
-
 def _remove_canned_opening(text: str) -> str:
     value = text.strip()
     for opening in ("تمام فهمتك", "تمام، فهمتك", "تمام. فهمتك", "Okay, I understand", "Got it"):
@@ -311,22 +280,6 @@ def _remove_canned_opening(text: str) -> str:
             cleaned = value[len(opening):].lstrip(" .،,:!—-")
             return cleaned or value
     return value
-
-
-def _explicit_action_authorization(text: str, action_type: ActionType) -> bool:
-    """Final text-level authorization check; this is policy, not intent detection."""
-    words = set(_normalize(text).replace("؟", " ").replace("?", " ").replace("!", " ").split())
-    if action_type == ActionType.CREATE_REQUEST:
-        return bool(words & {
-            "دورلي", "هاتلي", "جيبلي", "احجزلي", "اشتريلي", "رتبلي",
-            "find", "book", "buy", "arrange", "order",
-        })
-    if action_type in {ActionType.FOLLOW_CASE, ActionType.RECORD_PROBLEM}:
-        return bool(words & {
-            "تابع", "تابعها", "سجل", "سجلها", "صعد", "صعدها",
-            "follow", "record", "escalate",
-        })
-    return False
 
 
 class LocalGGUFProvider(ConversationProvider):
@@ -338,7 +291,7 @@ class LocalGGUFProvider(ConversationProvider):
     def __init__(
         self,
         model_path: str,
-        model_name: str = "qwen3.5-0.8b-q4_0",
+        model_name: str = "qwen2.5-1.5b-instruct-q3_k_m",
         context_window: int = 1536,
         threads: int = 2,
         chat_format: str | None = None,
@@ -374,7 +327,7 @@ class LocalGGUFProvider(ConversationProvider):
                 logger.info("Local conversation model loaded: %s", self.model)
         return self._llm
 
-    def _respond_sync(self, context: TurnContext) -> tuple[str, str]:
+    def _respond_sync(self, context: TurnContext) -> str:
         llm = self._load()
         messages: list[dict[str, str]] = [{"role": "system", "content": LOCAL_SYSTEM_PROMPT}]
         for item in context.history[-8:]:
@@ -397,74 +350,20 @@ class LocalGGUFProvider(ConversationProvider):
                 repeat_penalty=1.08,
                 max_tokens=220,
             )
-            control_result = llm.create_chat_completion(
-                messages=[
-                    {"role": "system", "content": LOCAL_CLASSIFIER_PROMPT},
-                    {"role": "user", "content": json.dumps({
-                        "message": context.message,
-                        "open_cases": case_summary,
-                    }, ensure_ascii=False)},
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.0,
-                max_tokens=140,
-            )
-        reply_text = str(reply_result["choices"][0]["message"]["content"] or "")
-        control_text = str(control_result["choices"][0]["message"]["content"] or "")
-        return reply_text, control_text
+        return str(reply_result["choices"][0]["message"]["content"] or "")
 
     async def respond(self, context: TurnContext) -> ProviderReply:
-        response_raw, control_raw = await asyncio.to_thread(self._respond_sync, context)
+        response_raw = await asyncio.to_thread(self._respond_sync, context)
         baseline = await self._fallback.respond(context)
-        try:
-            data = _json_from_model(control_raw)
-        except (json.JSONDecodeError, ValueError):
-            logger.warning("Local model returned invalid control metadata; applying safe local policy")
-            data = {
-                "intent": baseline.intent.value,
-                "confidence": baseline.confidence,
-                "action": {
-                    "type": baseline.action.type.value,
-                    "authorized": baseline.action.authorized,
-                    "confidence": baseline.action.confidence,
-                },
-            }
-        try:
-            intent = Intent(str(data.get("intent", "")).upper())
-        except ValueError:
-            intent = baseline.intent
-
         response_text = _remove_canned_opening(response_raw)
         if not response_text:
             response_text = baseline.text
-
-        proposed = data.get("action") if isinstance(data.get("action"), dict) else {}
-        try:
-            action_type = ActionType(str(proposed.get("type", "NONE")).upper())
-        except ValueError:
-            action_type = ActionType.NONE
-        authorized = bool(proposed.get("authorized")) and _explicit_action_authorization(context.message, action_type)
-        action = ActionProposal(
-            type=action_type,
-            authorized=authorized,
-            confidence=_bounded_float(proposed.get("confidence")),
-            case_id=proposed.get("case_id") if isinstance(proposed.get("case_id"), int) else None,
-            case_type=proposed.get("case_type") if proposed.get("case_type") in {"REQUEST", "EXECUTION", "EXTERNAL"} else None,
-            payload=proposed.get("payload") if isinstance(proposed.get("payload"), dict) else {},
-        )
-        if action.type == ActionType.CREATE_REQUEST:
-            action.payload = {"text": context.message}
-        if intent == Intent.NEW_REQUEST and baseline.action.type == ActionType.CREATE_REQUEST and baseline.action.authorized:
-            # The model classifies and writes the reply; the deterministic policy
-            # preserves explicit customer authorization even if a tiny model emits
-            # an incomplete action object.
-            action = baseline.action
         return ProviderReply(
             response_text,
-            intent,
-            _bounded_float(data.get("confidence")),
+            baseline.intent,
+            baseline.confidence,
             _style(context.message),
-            action,
+            baseline.action,
             self.name,
             self.model,
             False,
@@ -492,7 +391,7 @@ def build_provider() -> ConversationProvider:
     if local_path and Path(local_path).is_file():
         primary = LocalGGUFProvider(
             model_path=local_path,
-            model_name=os.getenv("LOCAL_MODEL_NAME", "qwen3.5-0.8b-q4_0"),
+            model_name=os.getenv("LOCAL_MODEL_NAME", "qwen2.5-1.5b-instruct-q3_k_m"),
             context_window=int(os.getenv("LOCAL_MODEL_CONTEXT", "1536")),
             threads=int(os.getenv("LOCAL_MODEL_THREADS", "2")),
             chat_format=os.getenv("LOCAL_MODEL_CHAT_FORMAT", "").strip() or None,

@@ -4,9 +4,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --prefer-binary -r requirements.txt
 COPY . .
 RUN mkdir -p /app/models
-ADD --checksum=sha256:57d1997790d1744fba5b40a7317df71ea5e2acee28c47e78f0cce39c0703f8cf https://huggingface.co/ggml-org/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_0.gguf /app/models/qwen3.5-0.8b-q4_0.gguf
-ENV LOCAL_MODEL_PATH=/app/models/qwen3.5-0.8b-q4_0.gguf \
-    LOCAL_MODEL_NAME=qwen3.5-0.8b-q4_0 \
+ADD --checksum=sha256:58cb5c05ecef48e82961f1a2be6544145ea26136f69dddda4bbbd092f0e4b993 https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q3_k_m.gguf /app/models/qwen2.5-1.5b-instruct-q3_k_m.gguf
+ENV LOCAL_MODEL_PATH=/app/models/qwen2.5-1.5b-instruct-q3_k_m.gguf \
+    LOCAL_MODEL_NAME=qwen2.5-1.5b-instruct-q3_k_m \
     LOCAL_MODEL_CONTEXT=1536 \
     LOCAL_MODEL_THREADS=2
 EXPOSE 8080
