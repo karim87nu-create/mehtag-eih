@@ -227,6 +227,10 @@ def audit(db, action, entity_type=None, entity_id=None, detail=None, actor="SYST
 def system_health(db):
     return {
         "db": "ok",
+        "conversation": {
+            "provider": conversation_provider.name,
+            "degraded": conversation_provider.degraded,
+        },
         "requests": db.query(Request).count(),
         "open_cases": db.query(ExecutionCase).filter(
             ExecutionCase.status.notin_(["VERIFIED_OUTCOME","CANCELLED"])

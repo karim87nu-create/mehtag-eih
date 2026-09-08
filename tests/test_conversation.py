@@ -1,11 +1,12 @@
 import asyncio
+import json
 
 from fastapi.testclient import TestClient
 
 import app.main as main_module
 from app.conversation import (
     ActionProposal, ActionType, FallbackProvider, Intent, ProviderReply,
-    ResponseStyle, TurnContext, gate_action,
+    LocalGGUFProvider, ResponseStyle, TurnContext, build_provider, gate_action,
 )
 from app.db import Base, engine
 from app.main import app
@@ -61,6 +62,62 @@ def test_gate_rejects_action_for_wrong_intent():
     decision = gate_action(reply, [])
     assert not decision.allowed
     assert "Only a new-request" in decision.reason
+
+
+def test_local_model_adapts_language_but_cannot_invent_action(tmp_path, monkeypatch):
+    model_file = tmp_path / "model.gguf"
+    model_file.write_bytes(b"test")
+    provider = LocalGGUFProvider(str(model_file))
+
+    class FakeLlama:
+        def create_chat_completion(self, **kwargs):
+            assert kwargs["response_format"] == {"type": "json_object"}
+            return {"choices": [{"message": {"content": json.dumps({
+                "response": "دي نكتة خفيفة 😄",
+                "intent": "SMALL_TALK",
+                "confidence": .91,
+                "action": {"type": "CREATE_REQUEST", "authorized": True, "confidence": .99},
+            }, ensure_ascii=False)}}]}
+
+    provider._llm = FakeLlama()
+    reply = asyncio.run(provider.respond(TurnContext("قولّي نكتة", [], "ar-EG", [])))
+    assert reply.provider == "local-gguf"
+    assert reply.degraded is False
+    assert reply.style.language == "ar"
+    assert reply.action.authorized is False
+    assert not gate_action(reply, []).allowed
+
+
+def test_build_provider_prefers_existing_local_model(tmp_path, monkeypatch):
+    model_file = tmp_path / "model.gguf"
+    model_file.write_bytes(b"test")
+    monkeypatch.setenv("LOCAL_MODEL_PATH", str(model_file))
+    monkeypatch.setenv("LLM_API_KEY", "must-not-be-selected")
+    provider = build_provider()
+    assert provider.name == "local-gguf"
+    assert provider.degraded is False
+
+
+def test_local_model_preserves_explicit_customer_authorization(tmp_path):
+    model_file = tmp_path / "model.gguf"
+    model_file.write_bytes(b"test")
+    provider = LocalGGUFProvider(str(model_file))
+
+    class FakeLlama:
+        def create_chat_completion(self, **_):
+            return {"choices": [{"message": {"content": json.dumps({
+                "response": "تمام فهمتك، هساعدك أدور.",
+                "intent": "NEW_REQUEST",
+                "confidence": .9,
+                "action": {"type": "NONE", "authorized": False, "confidence": 0},
+            }, ensure_ascii=False)}}]}
+
+    provider._llm = FakeLlama()
+    reply = asyncio.run(provider.respond(TurnContext("دورلي على سباك", [], "ar-EG", [])))
+    assert not reply.text.startswith("تمام فهمتك")
+    assert reply.action.type == ActionType.CREATE_REQUEST
+    assert reply.action.authorized is True
+    assert gate_action(reply, []).allowed
 
 
 def test_chat_persists_thread_messages_and_blocks_unwarranted_action(monkeypatch):

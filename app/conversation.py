@@ -7,11 +7,14 @@ chat text from silently turning into merchant outreach or execution.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import asyncio
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 import json
 import logging
 import os
+from pathlib import Path
+import threading
 import unicodedata
 from typing import Any
 
@@ -264,6 +267,182 @@ class OpenAICompatibleProvider(ConversationProvider):
         )
 
 
+LOCAL_SYSTEM_PROMPT = """You are Ma'ak (معاك), a useful personal service companion, not a call-centre bot.
+Reply naturally in the language and style of the latest user message: Egyptian Arabic, English, or a comfortable Arabic-English mix. Match mood, urgency and formality. Be concise unless detail is useful. You can answer general questions, chat, and tell jokes. Never start with canned phrases such as "تمام فهمتك". Do not invent facts, prices, merchant contact, offers, bookings, payments or completed actions.
+
+Return only one valid JSON object:
+{"response":"...","intent":"SMALL_TALK|NEW_REQUEST|CONTINUATION|EXTERNAL_EVENT_FOLLOWUP|PROBLEM|DECISION|GENERAL_QUESTION","confidence":0.0,"action":{"type":"NONE|CREATE_REQUEST|FOLLOW_CASE|RECORD_PROBLEM","authorized":false,"confidence":0.0,"case_id":null,"case_type":null,"payload":{}}}
+
+Use CREATE_REQUEST only when the user explicitly asks to start finding, booking, buying or arranging. Questions and discussion have action NONE. A suggestion is not authorization. Discovery is not outreach; outreach is not an offer; an offer is not execution. The server independently validates every action."""
+
+
+def _json_from_model(raw: str) -> dict[str, Any]:
+    """Accept plain JSON and defensively recover a single fenced/wrapped object."""
+    value = (raw or "").strip()
+    if value.startswith("```"):
+        value = value.removeprefix("```json").removeprefix("```")
+        value = value.removesuffix("```").strip()
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError:
+        start, end = value.find("{"), value.rfind("}")
+        if start < 0 or end <= start:
+            raise
+        data = json.loads(value[start:end + 1])
+    if not isinstance(data, dict):
+        raise ValueError("Local model response is not a JSON object")
+    return data
+
+
+def _bounded_float(value: Any, default: float = 0.5) -> float:
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _remove_canned_opening(text: str) -> str:
+    value = text.strip()
+    for opening in ("تمام فهمتك", "تمام، فهمتك", "تمام. فهمتك", "Okay, I understand", "Got it"):
+        if value.casefold().startswith(opening.casefold()):
+            cleaned = value[len(opening):].lstrip(" .،,:!—-")
+            return cleaned or value
+    return value
+
+
+def _explicit_action_authorization(text: str, action_type: ActionType) -> bool:
+    """Final text-level authorization check; this is policy, not intent detection."""
+    words = set(_normalize(text).replace("؟", " ").replace("?", " ").replace("!", " ").split())
+    if action_type == ActionType.CREATE_REQUEST:
+        return bool(words & {
+            "دورلي", "هاتلي", "جيبلي", "احجزلي", "اشتريلي", "رتبلي",
+            "find", "book", "buy", "arrange", "order",
+        })
+    if action_type in {ActionType.FOLLOW_CASE, ActionType.RECORD_PROBLEM}:
+        return bool(words & {
+            "تابع", "تابعها", "سجل", "سجلها", "صعد", "صعدها",
+            "follow", "record", "escalate",
+        })
+    return False
+
+
+class LocalGGUFProvider(ConversationProvider):
+    """Runs an open GGUF model in-process with no paid inference API."""
+
+    name = "local-gguf"
+    degraded = False
+
+    def __init__(
+        self,
+        model_path: str,
+        model_name: str = "qwen2.5-0.5b-instruct-q4_k_m",
+        context_window: int = 1536,
+        threads: int = 2,
+        chat_format: str = "chatml",
+    ):
+        self.model_path = str(Path(model_path))
+        self.model = model_name
+        self.context_window = max(768, min(context_window, 4096))
+        self.threads = max(1, min(threads, 8))
+        self.chat_format = chat_format
+        self._llm = None
+        self._lock = threading.RLock()
+        self._fallback = FallbackProvider()
+
+    def _load(self):
+        if self._llm is not None:
+            return self._llm
+        with self._lock:
+            if self._llm is None:
+                if not Path(self.model_path).is_file():
+                    raise FileNotFoundError(f"Local model not found: {self.model_path}")
+                from llama_cpp import Llama
+                self._llm = Llama(
+                    model_path=self.model_path,
+                    n_ctx=self.context_window,
+                    n_threads=self.threads,
+                    n_threads_batch=self.threads,
+                    n_batch=128,
+                    use_mmap=True,
+                    use_mlock=False,
+                    chat_format=self.chat_format,
+                    verbose=False,
+                )
+                logger.info("Local conversation model loaded: %s", self.model)
+        return self._llm
+
+    def _respond_sync(self, context: TurnContext) -> str:
+        llm = self._load()
+        messages: list[dict[str, str]] = [{"role": "system", "content": LOCAL_SYSTEM_PROMPT}]
+        for item in context.history[-8:]:
+            role = item.get("role", "user")
+            if role in {"user", "assistant"}:
+                messages.append({"role": role, "content": str(item.get("content", ""))[:900]})
+        case_summary = [
+            {"id": c.get("id"), "type": c.get("type"), "status": c.get("status"), "title": c.get("title")}
+            for c in context.active_cases[:5]
+        ]
+        latest = context.message
+        if case_summary:
+            latest += "\n\nOpen cases (reference only): " + json.dumps(case_summary, ensure_ascii=False)
+        messages.append({"role": "user", "content": latest})
+        with self._lock:
+            result = llm.create_chat_completion(
+                messages=messages,
+                response_format={"type": "json_object"},
+                temperature=0.65,
+                top_p=0.9,
+                repeat_penalty=1.08,
+                max_tokens=280,
+            )
+        return str(result["choices"][0]["message"]["content"] or "")
+
+    async def respond(self, context: TurnContext) -> ProviderReply:
+        raw = await asyncio.to_thread(self._respond_sync, context)
+        data = _json_from_model(raw)
+        baseline = await self._fallback.respond(context)
+        try:
+            intent = Intent(str(data.get("intent", "")).upper())
+        except ValueError:
+            intent = baseline.intent
+
+        response_text = _remove_canned_opening(str(data.get("response") or ""))
+        if not response_text:
+            response_text = baseline.text
+
+        proposed = data.get("action") if isinstance(data.get("action"), dict) else {}
+        try:
+            action_type = ActionType(str(proposed.get("type", "NONE")).upper())
+        except ValueError:
+            action_type = ActionType.NONE
+        authorized = bool(proposed.get("authorized")) and _explicit_action_authorization(context.message, action_type)
+        action = ActionProposal(
+            type=action_type,
+            authorized=authorized,
+            confidence=_bounded_float(proposed.get("confidence")),
+            case_id=proposed.get("case_id") if isinstance(proposed.get("case_id"), int) else None,
+            case_type=proposed.get("case_type") if proposed.get("case_type") in {"REQUEST", "EXECUTION", "EXTERNAL"} else None,
+            payload=proposed.get("payload") if isinstance(proposed.get("payload"), dict) else {},
+        )
+        if action.type == ActionType.CREATE_REQUEST:
+            action.payload = {"text": context.message}
+        if intent == Intent.NEW_REQUEST and baseline.action.type == ActionType.CREATE_REQUEST and baseline.action.authorized:
+            # The model classifies and writes the reply; the deterministic policy
+            # preserves explicit customer authorization even if a tiny model emits
+            # an incomplete action object.
+            action = baseline.action
+        return ProviderReply(
+            response_text,
+            intent,
+            _bounded_float(data.get("confidence")),
+            _style(context.message),
+            action,
+            self.name,
+            self.model,
+            False,
+        )
+
+
 class ResilientProvider(ConversationProvider):
     def __init__(self, primary: ConversationProvider | None, fallback: ConversationProvider):
         self.primary = primary
@@ -281,6 +460,17 @@ class ResilientProvider(ConversationProvider):
 
 
 def build_provider() -> ConversationProvider:
+    local_path = os.getenv("LOCAL_MODEL_PATH", "").strip()
+    if local_path and Path(local_path).is_file():
+        primary = LocalGGUFProvider(
+            model_path=local_path,
+            model_name=os.getenv("LOCAL_MODEL_NAME", "qwen2.5-0.5b-instruct-q4_k_m"),
+            context_window=int(os.getenv("LOCAL_MODEL_CONTEXT", "1536")),
+            threads=int(os.getenv("LOCAL_MODEL_THREADS", "2")),
+            chat_format=os.getenv("LOCAL_MODEL_CHAT_FORMAT", "chatml"),
+        )
+        return ResilientProvider(primary, FallbackProvider())
+
     key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
     model = os.getenv("LLM_MODEL", "gpt-5-mini")
     base = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
