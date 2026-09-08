@@ -17,6 +17,17 @@ def test_home_waits_for_customer_to_start():
     assert "اكتب أو اتكلم" in r.text
     assert "تمام فهمتك" not in r.text
     assert "detectCategory" not in r.text
+    assert "AbortController" in r.text
+    assert "الاتصال اتقطع قبل ما أعرف النتيجة" in r.text
+    assert "رسالتك ما اتحولتش لأي إجراء" not in r.text
+    assert "function storedGet" in r.text
+    assert "if(historyReady)await historyReady" in r.text
+
+    sw = client.get("/static/sw.js")
+    assert sw.status_code == 200
+    assert 'mehtag-eih-v3' in sw.text
+    assert "skipWaiting" in sw.text
+    assert "url.pathname.startsWith('/api/')" in sw.text
 
 def test_request_and_merchant_offer(monkeypatch):
     reset()

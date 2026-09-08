@@ -131,6 +131,78 @@ def _is_light_dinner_request(text: str) -> bool:
     return has_dinner and has_light
 
 
+def _social_kind(text: str) -> str | None:
+    normalized = _normalize(text).strip()
+    words = set(normalized.replace("؟", " ").replace("?", " ").replace("!", " ").split())
+    if words & {"نكتة", "نكته", "joke"} or "قولّي نكت" in normalized or "قولي نكت" in normalized:
+        return "joke"
+    if any(phrase in normalized for phrase in ("متاكد من اي", "متأكد من إيه", "sure about what")):
+        return "certainty_challenge"
+    if any(phrase in normalized for phrase in ("مش فاهمك", "مش فاهم", "مش واضح", "i don't understand", "i dont understand")):
+        return "misunderstanding"
+    if any(phrase in normalized for phrase in ("عامل اي", "عامل ايه", "اخبارك", "how are you", "how're you")):
+        return "how_are_you"
+    if words & {"اهلا", "هاي", "hello", "hi", "صباح", "مساء"}:
+        return "greeting"
+    if words & {"شكرا", "متشكر", "thanks", "thank"}:
+        return "thanks"
+    if words & {"باي", "سلام", "bye", "goodbye"}:
+        return "goodbye"
+    if words & {"متضايق", "زعلان", "مخنوق", "angry", "upset", "sad"}:
+        return "upset"
+    return None
+
+
+def _pick_joke(language: str, history: list[dict[str, str]]) -> str:
+    arabic_jokes = (
+        "مدرس رياضيات خلّف ولدين، سمّى واحد س والتاني ص… عشان يعرف يحل مشاكلهم 😄",
+        "واحد كسلان كتب هدفه للسنة الجديدة: «أكمّل أهداف السنة اللي فاتت»… توفير مجهود من أوله 😄",
+        "كمبيوتر عطس، قالوله مالك؟ قال: عندي فايروس بس مستني الـupdate 😄",
+        "واحد بخيل وقع منه جنيه من البلكونة، نزل يجري يلحقه… وصل لقى الجنيه سبقه 😄",
+    )
+    english_jokes = (
+        "Why did the computer get cold? It left its Windows open. 😄",
+        "I told my calendar I needed a break. It said my days were numbered. 😄",
+        "Why don't programmers like nature? It has too many bugs. 😄",
+        "I tried to catch some fog yesterday. I mist. 😄",
+    )
+    jokes = english_jokes if language == "en" else arabic_jokes
+    user_turns = sum(1 for item in history if item.get("role") == "user")
+    return jokes[user_turns % len(jokes)]
+
+
+def _assistant_history_is_useful(text: str) -> bool:
+    normalized = _normalize(text).strip(" .!؟?")
+    rejected = {
+        "انا متاكد",
+        "عاااامر",
+        "عذرا، لا استطيع انشاء نكتات او اخترنها",
+    }
+    return bool(normalized) and normalized not in rejected
+
+
+def _generated_reply_is_usable(text: str, context: TurnContext, baseline: ProviderReply) -> bool:
+    normalized = _normalize(text).strip(" .!؟?")
+    if len(normalized) < 4:
+        return False
+    if normalized in {"انا متاكد", "i am sure", "im sure", "عاااامر"}:
+        return False
+    if _social_kind(context.message) == "joke" and any(
+        phrase in normalized for phrase in ("لا استطيع", "لا يمكنني", "can't", "cannot")
+    ):
+        return False
+    previous = {
+        _normalize(str(item.get("content", ""))).strip(" .!؟?")
+        for item in context.history
+        if item.get("role") == "assistant"
+    }
+    if normalized in previous:
+        return False
+    if baseline.style.language == "ar" and not any("ARABIC" in unicodedata.name(char, "") for char in text):
+        return False
+    return True
+
+
 class FallbackProvider(ConversationProvider):
     """A deliberately limited local provider used when no LLM is configured.
 
@@ -143,7 +215,8 @@ class FallbackProvider(ConversationProvider):
     def _intent(self, text: str, has_case: bool) -> Intent:
         low = _normalize(text).strip()
         tokens = set(low.replace("؟", " ").replace("?", " ").replace("!", " ").split())
-        if tokens & {"نكتة", "نكته", "joke"}:
+        social = _social_kind(text)
+        if social in {"joke", "certainty_challenge", "misunderstanding"}:
             return Intent.SMALL_TALK
         if tokens & {"مشكلة", "اتأخر", "متأخر", "غلط", "بوظ", "شكوى", "problem", "late", "wrong", "refund"}:
             return Intent.PROBLEM
@@ -155,6 +228,8 @@ class FallbackProvider(ConversationProvider):
             return Intent.CONTINUATION
         if tokens & {"عايز", "عاوز", "محتاج", "دورلي", "هاتلي", "احجزلي", "اشتري", "book", "find", "buy", "need", "want"}:
             return Intent.NEW_REQUEST
+        if social:
+            return Intent.SMALL_TALK
         if "?" in text or "؟" in text or tokens & {"ليه", "ازاي", "ايه", "اي", "يعني", "مين", "what", "why", "how", "who", "mean"}:
             return Intent.GENERAL_QUESTION
         return Intent.SMALL_TALK
@@ -164,9 +239,24 @@ class FallbackProvider(ConversationProvider):
         intent = self._intent(context.message, bool(context.active_cases))
         lang = style.language
         normalized = _normalize(context.message)
+        social = _social_kind(context.message)
         action = ActionProposal()
-        if intent == Intent.SMALL_TALK and any(x in context.message.casefold() for x in ("نكت", "joke")):
-            text = "مرة واحد راح يشتري راحة بال… قالوله خلصت، بس فيه انتظار مجاني 😄" if lang != "en" else "I tried to buy some peace of mind. It was out of stock, but the waiting list was free 😄"
+        if social == "joke":
+            text = _pick_joke(lang, context.history)
+        elif social == "certainty_challenge":
+            text = "معاك حق—مفيش حاجة في كلامك تستدعي إني أقول «أنا متأكد». الرد ده كان غلط مني." if lang != "en" else "You're right—there was nothing there for me to be 'sure' about. That reply was wrong."
+        elif social == "misunderstanding":
+            text = "حقك عليّ، ردي اللي فات ماكانش واضح. قولّي النقطة اللي وقفت معاك وأنا أشرحها مباشرة." if lang != "en" else "That's on me—the last reply wasn't clear. Tell me which part lost you and I'll explain it directly."
+        elif social == "how_are_you" and intent == Intent.SMALL_TALK:
+            text = "كويس وبكامل تركيزي 😄 إنت عامل إيه؟" if lang != "en" else "Doing well and fully switched on 😄 How are you?"
+        elif social == "greeting" and intent == Intent.SMALL_TALK:
+            text = "أهلًا 👋 قول اللي في بالك." if lang != "en" else "Hi 👋 What's on your mind?"
+        elif social == "thanks" and intent == Intent.SMALL_TALK:
+            text = "العفو، تحت أمرك." if lang != "en" else "You're welcome."
+        elif social == "goodbye" and intent == Intent.SMALL_TALK:
+            text = "سلام 👋 أنا موجود لما تحتاجني." if lang != "en" else "Bye 👋 I'll be here when you need me."
+        elif social == "upset" and intent == Intent.SMALL_TALK:
+            text = "واضح إن اليوم تقيل عليك. خد نفس، واحكيلي أكتر حاجة مضايقاك ونفكّها واحدة واحدة." if lang != "en" else "Sounds like a rough day. Take a breath, tell me the hardest part, and we'll unpack it one step at a time."
         elif intent == Intent.NEW_REQUEST:
             explicit = any(x in context.message.casefold().split() for x in ("دورلي", "هاتلي", "احجزلي", "اشتري", "book", "find", "buy"))
             action = ActionProposal(ActionType.CREATE_REQUEST, explicit, 0.84 if explicit else 0.64, payload={"text": context.message})
@@ -199,19 +289,9 @@ class FallbackProvider(ConversationProvider):
                     "It means the full conversational AI is not connected right now. Saving, tracking, and starting requests work, but open-ended questions and complex language will be weaker."
                 )
             else:
-                text = "السؤال ده محتاج المحادثة الذكية الكاملة، وهي مش متصلة حاليًا. أقدر أساعدك في طلب أو متابعة محددة من غير ما أختلق إجابة." if lang != "en" else "That question needs the full conversational AI, which is not connected right now. I can still help with a specific request or follow-up without making up an answer."
+                text = "مش واثق إني أديك إجابة دقيقة على السؤال ده بالشكل الحالي. زوّدني بتفصيلة واحدة عن اللي تقصده وأنا أجاوبك من غير تخمين." if lang != "en" else "I'm not confident I'd answer that accurately as written. Give me one detail about what you mean and I'll answer without guessing."
         else:
-            greeting = any(word in normalized.split() for word in ("اهلا", "هاي", "hello", "hi", "صباح", "مساء"))
-            thanks = any(word in normalized.split() for word in ("شكرا", "متشكر", "thanks", "thank"))
-            if greeting:
-                text = "أهلًا 👋 قولّي محتاج إيه." if lang != "en" else "Hi 👋 What do you need?"
-            elif thanks:
-                text = "العفو." if lang != "en" else "You’re welcome."
-            else:
-                previous = next((m.get("content", "") for m in reversed(context.history) if m.get("role") == "assistant"), "")
-                text = "مش لاقط قصدك في الوضع الأساسي. اكتبلي سؤالك أو طلبك بشكل مباشر شوية." if lang != "en" else "I couldn't reliably understand that in basic mode. Try stating the question or request a little more directly."
-                if previous == text:
-                    text = "المشكلة مش في صياغتك؛ قدرات الفهم الكاملة غير متصلة. أقدر أبدأ طلب واضح أو أتابع حالة موجودة." if lang != "en" else "The issue isn't your wording; full understanding isn't connected. I can start a clear request or follow an existing case."
+            text = "كمّل، أنا متابع السياق معاك." if lang != "en" else "Go on—I'm following the context."
         return ProviderReply(text, intent, 0.82, style, action, self.name, None, True)
 
 
@@ -389,10 +469,11 @@ class LocalGGUFProvider(ConversationProvider):
     def _respond_sync(self, context: TurnContext, baseline: ProviderReply) -> str:
         llm = self._load()
         messages: list[dict[str, str]] = [{"role": "system", "content": _local_system_prompt(context, baseline)}]
-        for item in context.history[-6:]:
+        for item in context.history[-4:]:
             role = item.get("role", "user")
-            if role in {"user", "assistant"}:
-                messages.append({"role": role, "content": str(item.get("content", ""))[:900]})
+            content = str(item.get("content", ""))[:500]
+            if role in {"user", "assistant"} and (role != "assistant" or _assistant_history_is_useful(content)):
+                messages.append({"role": role, "content": content})
         case_summary = [
             {"id": c.get("id"), "type": c.get("type"), "status": c.get("status"), "title": c.get("title")}
             for c in context.active_cases[:5]
@@ -404,21 +485,30 @@ class LocalGGUFProvider(ConversationProvider):
         with self._lock:
             reply_result = llm.create_chat_completion(
                 messages=messages,
-                temperature=0.78,
-                top_p=0.92,
-                repeat_penalty=1.08,
-                max_tokens=220,
+                temperature=0.48,
+                top_p=0.85,
+                repeat_penalty=1.14,
+                max_tokens=180,
             )
         return str(reply_result["choices"][0]["message"]["content"] or "")
 
     async def respond(self, context: TurnContext) -> ProviderReply:
         baseline = await self._fallback.respond(context)
-        if _is_light_dinner_request(context.message) and not baseline.action.authorized:
+        social = _social_kind(context.message)
+        prefer_grounded = bool(social) or baseline.intent in {
+            Intent.NEW_REQUEST,
+            Intent.CONTINUATION,
+            Intent.EXTERNAL_EVENT_FOLLOWUP,
+            Intent.PROBLEM,
+            Intent.DECISION,
+        }
+        if prefer_grounded:
             response_text = baseline.text
         else:
             response_raw = await asyncio.to_thread(self._respond_sync, context, baseline)
             response_text = _remove_canned_opening(response_raw)
-        if not response_text:
+        if not _generated_reply_is_usable(response_text, context, baseline):
+            logger.info("Rejected low-quality local reply for intent=%s", baseline.intent.value)
             response_text = baseline.text
         return ProviderReply(
             response_text,
@@ -433,16 +523,24 @@ class LocalGGUFProvider(ConversationProvider):
 
 
 class ResilientProvider(ConversationProvider):
-    def __init__(self, primary: ConversationProvider | None, fallback: ConversationProvider):
+    def __init__(
+        self,
+        primary: ConversationProvider | None,
+        fallback: ConversationProvider,
+        timeout_seconds: float = 20.0,
+    ):
         self.primary = primary
         self.fallback = fallback
+        self.timeout_seconds = max(1.0, min(float(timeout_seconds), 60.0))
         self.name = primary.name if primary else fallback.name
         self.degraded = primary is None
 
     async def respond(self, context: TurnContext) -> ProviderReply:
         if self.primary:
             try:
-                return await self.primary.respond(context)
+                return await asyncio.wait_for(self.primary.respond(context), timeout=self.timeout_seconds)
+            except TimeoutError:
+                logger.warning("Primary conversation provider timed out after %.1fs; using fallback", self.timeout_seconds)
             except Exception as exc:
                 logger.warning("Primary conversation provider failed; using fallback: %s", str(exc)[:700])
         return await self.fallback.respond(context)
@@ -458,13 +556,21 @@ def build_provider() -> ConversationProvider:
             threads=int(os.getenv("LOCAL_MODEL_THREADS", "2")),
             chat_format=os.getenv("LOCAL_MODEL_CHAT_FORMAT", "").strip() or None,
         )
-        return ResilientProvider(primary, FallbackProvider())
+        return ResilientProvider(
+            primary,
+            FallbackProvider(),
+            timeout_seconds=float(os.getenv("CONVERSATION_TIMEOUT_SECONDS", "20")),
+        )
 
     key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
     model = os.getenv("LLM_MODEL", "gpt-5-mini")
     base = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
     primary = OpenAICompatibleProvider(key, model, base) if key else None
-    return ResilientProvider(primary, FallbackProvider())
+    return ResilientProvider(
+        primary,
+        FallbackProvider(),
+        timeout_seconds=float(os.getenv("CONVERSATION_TIMEOUT_SECONDS", "20")),
+    )
 
 
 def gate_action(reply: ProviderReply, active_cases: list[dict[str, Any]]) -> GateDecision:

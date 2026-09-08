@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 import app.main as main_module
 from app.conversation import (
     ActionProposal, ActionType, FallbackProvider, Intent, ProviderReply,
-    LocalGGUFProvider, ResponseStyle, TurnContext, _local_system_prompt,
+    LocalGGUFProvider, ResilientProvider, ResponseStyle, TurnContext, _local_system_prompt,
     build_provider, gate_action,
 )
 from app.db import Base, engine
@@ -32,9 +32,42 @@ def test_language_and_tone_adaptation():
     assert ar.style.urgency == "urgent"
     en = fallback("Please tell me a joke")
     assert en.style.language == "en"
-    assert "peace of mind" in en.text
+    assert "Windows open" in en.text
     mixed = fallback("محتاج book فندق")
     assert mixed.style.language == "mixed"
+
+
+def test_common_social_turns_are_natural_and_contextual():
+    hello = fallback("عامل إيه؟")
+    assert hello.intent == Intent.SMALL_TALK
+    assert "إنت عامل إيه" in hello.text
+    assert "أنا متأكد" not in hello.text
+
+    confused = asyncio.run(FallbackProvider().respond(TurnContext(
+        "مش فاهمك", [{"role": "assistant", "content": "رد سابق"}], "ar-EG", [],
+    )))
+    assert confused.intent == Intent.SMALL_TALK
+    assert "ردي اللي فات" in confused.text
+
+    challenge = fallback("متأكد من إيه؟")
+    assert "الرد ده كان غلط" in challenge.text
+
+    greeted_request = fallback("هاي، دورلي على سباك")
+    assert greeted_request.intent == Intent.NEW_REQUEST
+    assert greeted_request.action.authorized is True
+    assert gate_action(greeted_request, []).allowed
+
+
+def test_repeated_joke_request_gets_a_complete_different_joke():
+    first = asyncio.run(FallbackProvider().respond(TurnContext("قولي نكتة", [], "ar-EG", [])))
+    second = asyncio.run(FallbackProvider().respond(TurnContext(
+        "قولي نكتة", [
+            {"role": "user", "content": "قولي نكتة"},
+            {"role": "assistant", "content": first.text},
+        ], "ar-EG", [],
+    )))
+    assert first.text != second.text
+    assert "😄" in first.text and "😄" in second.text
 
 
 def test_small_talk_and_questions_do_not_cross_action_gate():
@@ -83,6 +116,28 @@ def test_local_model_adapts_language_but_cannot_invent_action(tmp_path, monkeypa
     assert not gate_action(reply, []).allowed
 
 
+def test_local_model_rejects_repetitive_nonsense_and_bad_history(tmp_path):
+    model_file = tmp_path / "model.gguf"
+    model_file.write_bytes(b"test")
+    provider = LocalGGUFProvider(str(model_file))
+    captured = {}
+
+    class BadLlama:
+        def create_chat_completion(self, **kwargs):
+            captured["messages"] = kwargs["messages"]
+            return {"choices": [{"message": {"content": "أنا متأكد."}}]}
+
+    provider._llm = BadLlama()
+    context = TurnContext(
+        "ليه السما لونها أزرق؟",
+        [{"role": "assistant", "content": "أنا متأكد."}],
+        "ar-EG", [],
+    )
+    reply = asyncio.run(provider.respond(context))
+    assert reply.text != "أنا متأكد."
+    assert all(message["content"] != "أنا متأكد." for message in captured["messages"])
+
+
 def test_mixed_food_language_is_disambiguated_and_action_stays_blocked(tmp_path):
     context = TurnContext(
         "محتاج recommendation لعشا light بس مش عايزك تطلب حاجة",
@@ -119,6 +174,21 @@ def test_build_provider_prefers_existing_local_model(tmp_path, monkeypatch):
     provider = build_provider()
     assert provider.name == "local-gguf"
     assert provider.degraded is False
+
+
+def test_resilient_provider_times_out_to_an_honest_fallback():
+    class SlowProvider(FallbackProvider):
+        name = "slow-test"
+
+        async def respond(self, context):
+            await asyncio.sleep(1.2)
+            return await super().respond(context)
+
+    provider = ResilientProvider(SlowProvider(), FallbackProvider(), timeout_seconds=1)
+    reply = asyncio.run(provider.respond(TurnContext("عامل إيه؟", [], "ar-EG", [])))
+    assert reply.provider == "local-fallback"
+    assert reply.degraded is True
+    assert "إنت عامل إيه" in reply.text
 
 
 def test_local_model_preserves_explicit_customer_authorization(tmp_path):

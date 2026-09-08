@@ -103,9 +103,15 @@
   const hint=document.getElementById('composerHint');
   const THREAD_KEY='maak_conversation_thread_v1';
   const CUSTOMER_KEY='maak_customer_ref_v1';
-  let threadId=localStorage.getItem(THREAD_KEY);
-  let customerRef=localStorage.getItem(CUSTOMER_KEY);
-  if(!customerRef){customerRef=(crypto.randomUUID?crypto.randomUUID():String(Date.now()));localStorage.setItem(CUSTOMER_KEY,customerRef)}
+  const memoryStore={};
+  function storedGet(key){try{return localStorage.getItem(key)}catch(_){return memoryStore[key]||null}}
+  function storedSet(key,value){memoryStore[key]=value;try{localStorage.setItem(key,value)}catch(_){}}
+  function storedRemove(key){delete memoryStore[key];try{localStorage.removeItem(key)}catch(_){}}
+  let threadId=storedGet(THREAD_KEY);
+  let customerRef=storedGet(CUSTOMER_KEY);
+  if(!customerRef){customerRef=(window.crypto&&crypto.randomUUID?crypto.randomUUID():`${Date.now()}-${Math.random()}`);storedSet(CUSTOMER_KEY,customerRef)}
+  let historyReady=null;
+  let busy=false;
 
   function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
   function setDirection(node,text){
@@ -134,23 +140,38 @@
   }
   async function loadHistory(){
     if(!threadId)return;
+    const requestedThread=threadId;
     try{
-      const r=await fetch(`/api/conversations/${encodeURIComponent(threadId)}?customer_ref=${encodeURIComponent(customerRef)}`);
-      if(!r.ok){if(r.status===404||r.status===403){localStorage.removeItem(THREAD_KEY);threadId=null}return}
+      const r=await fetch(`/api/conversations/${encodeURIComponent(threadId)}?customer_ref=${encodeURIComponent(customerRef)}`,{cache:'no-store'});
+      if(requestedThread!==threadId)return;
+      if(!r.ok){if(r.status===404||r.status===403){storedRemove(THREAD_KEY);threadId=null}return}
       const data=await r.json();data.messages.forEach(m=>addMessage(m.role,m.content,false));degraded.classList.toggle('hidden',!data.degraded);
     }catch(e){hint.textContent='المحادثة المحفوظة مش متاحة دلوقتي.'}
   }
   async function handle(text){
-    text=(text||'').trim();if(!text||send.disabled)return;
-    addMessage('user',text);input.value='';autoSize();send.disabled=true;mic.disabled=true;hint.textContent='لحظة…';const wait=thinking();
+    text=(text||'').trim();if(!text||busy)return;
+    busy=true;send.disabled=true;mic.disabled=true;
+    if(historyReady)await historyReady;
+    addMessage('user',text);input.value='';autoSize();hint.textContent='لحظة…';const wait=thinking();
+    const controller=new AbortController();
+    const timeout=setTimeout(()=>controller.abort(),45000);
+    const progress=setTimeout(()=>{hint.textContent='بفكر في رد مناسب…'},1800);
+    const slower=setTimeout(()=>{hint.textContent='ثواني كمان…'},7000);
     try{
-      const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text,thread_id:threadId,customer_ref:customerRef,locale:navigator.language||'ar-EG'})});
-      const data=await r.json();wait.remove();if(!r.ok)throw new Error(data.detail||'request failed');
-      threadId=data.thread_id;localStorage.setItem(THREAD_KEY,threadId);addMessage('assistant',data.message.content);addCard(data.card);
+      const r=await fetch('/api/chat',{method:'POST',cache:'no-store',signal:controller.signal,headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({message:text,thread_id:threadId,customer_ref:customerRef,locale:navigator.language||'ar-EG'})});
+      const isJson=(r.headers.get('content-type')||'').includes('application/json');
+      const data=isJson?await r.json():null;wait.remove();if(!r.ok)throw new Error((data&&data.detail)||`HTTP ${r.status}`);
+      if(!data.message||!data.message.content)throw new Error('empty response');
+      threadId=data.thread_id;storedSet(THREAD_KEY,threadId);addMessage('assistant',data.message.content);addCard(data.card);
       degraded.classList.toggle('hidden',!data.provider.degraded);
       hint.textContent=data.action.status==='EXECUTED'?'المتابعة بدأت، والحالة قدامك.':'كمّل كلامك عادي.';
-    }catch(e){wait.remove();addMessage('assistant','حصلت مشكلة في الاتصال. رسالتك ما اتحولتش لأي إجراء.');hint.textContent='جرّب تبعتها تاني.'}
-    finally{send.disabled=false;mic.disabled=false;input.focus()}
+    }catch(e){
+      wait.remove();
+      const late=e&&e.name==='AbortError';
+      addMessage('assistant',late?'الرد اتأخر ومش هخمن النتيجة. حدّث الصفحة قبل ما تكرر أي طلب تنفيذي.':'الاتصال اتقطع قبل ما أعرف النتيجة. حدّث الصفحة قبل ما تكرر أي طلب تنفيذي.');
+      hint.textContent=late?'تقدر تكمّل برسالة عادية.':'راجع الاتصال وجرب تاني.';
+    }
+    finally{clearTimeout(timeout);clearTimeout(progress);clearTimeout(slower);busy=false;send.disabled=false;mic.disabled=false;input.focus()}
   }
   form.addEventListener('submit',e=>{e.preventDefault();handle(input.value)});
   input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();handle(input.value)}});
@@ -168,7 +189,7 @@
       r.onend=()=>{active=false;mic.classList.remove('listening')};r.start();
     });
   }else mic.style.display='none';
-  loadHistory();
+  historyReady=loadHistory();
 })();
 </script>
 </body></html>
