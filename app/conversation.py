@@ -267,15 +267,49 @@ class OpenAICompatibleProvider(ConversationProvider):
         )
 
 
-LOCAL_SYSTEM_PROMPT = """You are Ma'ak (معاك), a useful personal service companion, not a call-centre bot.
-Answer the latest user directly and naturally in their language and style: Egyptian Arabic, English, or a comfortable Arabic-English mix. Match mood, urgency and formality. Be concise unless detail helps. Never begin with canned acknowledgements such as "تمام فهمتك", "أنا هنا احكي براحتك", "Got it", or "I understand".
+def _local_system_prompt(context: TurnContext, baseline: ProviderReply) -> str:
+    style = baseline.style
+    if style.language == "en":
+        identity = "You are Ma'ak, a smart, practical personal companion. Reply only in natural English."
+    elif style.language == "mixed":
+        identity = "أنت «معاك»، صاحب مصري ذكي وعملي. رد بنفس خليط العربي والإنجليزي اللي المستخدم بيكتبه."
+    else:
+        identity = "أنت «معاك»، صاحب مصري ذكي وعملي. رد بالمصري الطبيعي فقط."
 
-You can answer general questions, chat, and tell jokes. If asked for a joke, tell a complete joke with its punchline; do not merely announce that a joke follows. Do not mention internal classifications or JSON. Do not invent facts, prices, merchant contact, offers, bookings, payments or completed actions. Discovery is not outreach; outreach is not an offer; an offer is not execution."""
+    normalized = _normalize(context.message)
+    english = style.language == "en"
+    if baseline.intent == Intent.SMALL_TALK and any(word in normalized for word in ("نكته", "نكتة", "joke")):
+        task = "Tell one complete, clear joke with a punchline in two lines. Do not introduce or explain it." if english else "احكي نكتة مفهومة كاملة لها نهاية مضحكة في سطرين. لا تشرحها ولا تقدم لها."
+    elif style.mood == "upset":
+        task = "Respond warmly in one or two sentences and offer one small useful step. Do not ask a generic question." if english else "رد بهدوء وتعاطف في جملة أو جملتين، وادّيه خطوة صغيرة مفيدة. لا تسأله سؤالًا عامًا."
+    elif baseline.intent == Intent.NEW_REQUEST and not baseline.action.authorized:
+        task = "Give specific advice or options only. The user did not authorize any purchase or action, so do not claim one." if english else "ساعده بنصيحة أو اختيارات محددة فقط. هو لم يأذن بتنفيذ أو شراء أي شيء، فلا تدّعي التنفيذ."
+    elif baseline.intent == Intent.NEW_REQUEST:
+        task = "Briefly say you will start, without claiming a supplier was found, contacted, or sent an offer." if english else "رد باختصار إنك هتبدأ المطلوب، من غير ما تدّعي إن جهة اتوجدت أو تم التواصل أو وصل عرض."
+    elif baseline.intent == Intent.PROBLEM:
+        task = "Acknowledge the problem calmly, give the next step, and ask only one question if essential." if english else "اعترف بالمشكلة بهدوء وحدد الخطوة التالية، واسأل سؤالًا واحدًا فقط لو ضروري."
+    elif baseline.intent == Intent.DECISION:
+        task = "Help compare the decision clearly. Do not execute a decision or payment yourself." if english else "ساعده يقارن القرار بوضوح، ولا تنفذ قرارًا أو دفعًا من نفسك."
+    else:
+        task = "Answer directly and briefly. If unsure of a fact, say so rather than inventing it." if english else "جاوب مباشرة وباختصار. لو معلومة مش متأكد منها قل إنك مش متأكد بدل اختراعها."
+
+    guardrail = (
+        "Never start with: Got it, Okay, I understand. Do not mention internal labels or JSON. "
+        "Never claim a booking, purchase, payment, supplier contact, or offer that did not happen."
+        if english else
+        "ممنوع تبدأ بـ: تمام فهمتك، أنا هنا احكي براحتك، حسنا. لا تذكر تصنيفات داخلية ولا JSON. "
+        "لا تدّعي حجزًا أو شراءً أو دفعًا أو تواصلًا لم يحدث."
+    )
+    return f"{identity}\n{task}\n{guardrail}"
 
 
 def _remove_canned_opening(text: str) -> str:
     value = text.strip()
-    for opening in ("تمام فهمتك", "تمام، فهمتك", "تمام. فهمتك", "Okay, I understand", "Got it"):
+    for opening in (
+        "تمام فهمتك", "تمام، فهمتك", "تمام. فهمتك",
+        "أنا هنا احكي براحتك", "أنا هنا أحكي براحتك", "أنا هنا. احكي براحتك",
+        "Okay, I understand", "Got it", "Okay",
+    ):
         if value.casefold().startswith(opening.casefold()):
             cleaned = value[len(opening):].lstrip(" .،,:!—-")
             return cleaned or value
@@ -327,10 +361,10 @@ class LocalGGUFProvider(ConversationProvider):
                 logger.info("Local conversation model loaded: %s", self.model)
         return self._llm
 
-    def _respond_sync(self, context: TurnContext) -> str:
+    def _respond_sync(self, context: TurnContext, baseline: ProviderReply) -> str:
         llm = self._load()
-        messages: list[dict[str, str]] = [{"role": "system", "content": LOCAL_SYSTEM_PROMPT}]
-        for item in context.history[-8:]:
+        messages: list[dict[str, str]] = [{"role": "system", "content": _local_system_prompt(context, baseline)}]
+        for item in context.history[-6:]:
             role = item.get("role", "user")
             if role in {"user", "assistant"}:
                 messages.append({"role": role, "content": str(item.get("content", ""))[:900]})
@@ -353,8 +387,8 @@ class LocalGGUFProvider(ConversationProvider):
         return str(reply_result["choices"][0]["message"]["content"] or "")
 
     async def respond(self, context: TurnContext) -> ProviderReply:
-        response_raw = await asyncio.to_thread(self._respond_sync, context)
         baseline = await self._fallback.respond(context)
+        response_raw = await asyncio.to_thread(self._respond_sync, context, baseline)
         response_text = _remove_canned_opening(response_raw)
         if not response_text:
             response_text = baseline.text
