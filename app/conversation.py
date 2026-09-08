@@ -338,10 +338,10 @@ class LocalGGUFProvider(ConversationProvider):
     def __init__(
         self,
         model_path: str,
-        model_name: str = "qwen2.5-0.5b-instruct-q4_k_m",
+        model_name: str = "qwen3.5-0.8b-q4_0",
         context_window: int = 1536,
         threads: int = 2,
-        chat_format: str = "chatml",
+        chat_format: str | None = None,
     ):
         self.model_path = str(Path(model_path))
         self.model = model_name
@@ -492,10 +492,10 @@ def build_provider() -> ConversationProvider:
     if local_path and Path(local_path).is_file():
         primary = LocalGGUFProvider(
             model_path=local_path,
-            model_name=os.getenv("LOCAL_MODEL_NAME", "qwen2.5-0.5b-instruct-q4_k_m"),
+            model_name=os.getenv("LOCAL_MODEL_NAME", "qwen3.5-0.8b-q4_0"),
             context_window=int(os.getenv("LOCAL_MODEL_CONTEXT", "1536")),
             threads=int(os.getenv("LOCAL_MODEL_THREADS", "2")),
-            chat_format=os.getenv("LOCAL_MODEL_CHAT_FORMAT", "chatml"),
+            chat_format=os.getenv("LOCAL_MODEL_CHAT_FORMAT", "").strip() or None,
         )
         return ResilientProvider(primary, FallbackProvider())
 
