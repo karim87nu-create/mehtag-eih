@@ -3,9 +3,11 @@ import asyncio
 from fastapi.testclient import TestClient
 
 import app.main as main_module
+import app.conversation as conversation_module
 from app.conversation import (
     ActionProposal, ActionType, FallbackProvider, Intent, ProviderReply,
-    LocalGGUFProvider, ResilientProvider, ResponseStyle, TurnContext, _local_system_prompt,
+    KnowledgeSnippet, LocalGGUFProvider, ResilientProvider, ResponseStyle, TurnContext,
+    _local_system_prompt, _select_wikipedia_snippet,
     build_provider, gate_action,
 )
 from app.db import Base, engine
@@ -116,7 +118,7 @@ def test_local_model_adapts_language_but_cannot_invent_action(tmp_path, monkeypa
     assert not gate_action(reply, []).allowed
 
 
-def test_local_model_rejects_repetitive_nonsense_and_bad_history(tmp_path):
+def test_local_model_rejects_repetitive_nonsense_and_bad_history(tmp_path, monkeypatch):
     model_file = tmp_path / "model.gguf"
     model_file.write_bytes(b"test")
     provider = LocalGGUFProvider(str(model_file))
@@ -128,6 +130,13 @@ def test_local_model_rejects_repetitive_nonsense_and_bad_history(tmp_path):
             return {"choices": [{"message": {"content": "أنا متأكد."}}]}
 
     provider._llm = BadLlama()
+    async def knowledge(_):
+        return KnowledgeSnippet(
+            "سماء",
+            "تتبعثر الموجات الأقصر من ضوء الشمس في الغلاف الجوي أكثر، فيصل الضوء الأزرق للعين.",
+            "https://ar.wikipedia.org/wiki/سماء",
+        )
+    monkeypatch.setattr(conversation_module, "_wikipedia_knowledge", knowledge)
     context = TurnContext(
         "ليه السما لونها أزرق؟",
         [{"role": "assistant", "content": "أنا متأكد."}],
@@ -136,6 +145,107 @@ def test_local_model_rejects_repetitive_nonsense_and_bad_history(tmp_path):
     reply = asyncio.run(provider.respond(context))
     assert reply.text != "أنا متأكد."
     assert all(message["content"] != "أنا متأكد." for message in captured["messages"])
+
+
+def test_wikipedia_result_requires_relevance_and_extracts_answer_sentences():
+    data = {"query": {"pages": [
+        {"title": "فيلم أزرق", "extract": "فيلم درامي قديم عن عائلة.", "fullurl": "https://example.test/film"},
+        {
+            "title": "سماء",
+            "extract": (
+                "السماء هي كل ما يقع فوق سطح الأرض. "
+                "سبب ظهور السماء باللون الأزرق هو تشتت ضوء الشمس في الغلاف الجوي. "
+                "تتبعثر الموجات الأقصر أكثر، فيصل الضوء الأزرق إلى العين من اتجاهات كثيرة."
+            ),
+            "fullurl": "https://ar.wikipedia.org/wiki/سماء",
+        },
+    ]}}
+    snippet = _select_wikipedia_snippet(data, "ليه السما لونها أزرق؟")
+    assert snippet is not None
+    assert snippet.title == "سماء"
+    assert "تشتت ضوء الشمس" in snippet.text
+
+
+def test_wikipedia_result_rejects_old_belief_in_favour_of_scientific_evidence():
+    data = {"query": {"pages": [{
+        "title": "سماء",
+        "extract": (
+            "كان المعتقد القديم عن السماء بأنها غلاف للأرض لونه أزرق. "
+            "ويعتقد البعض أن اللون مجرد انعكاس ضوء الشمس. "
+            "طبقًا لقانون رايلي تتبعثر الموجات الأقصر من ضوء الشمس في الغلاف الجوي بدرجة أكبر. "
+            "ويصل الضوء الأزرق المتبعثر إلى العين من اتجاهات كثيرة، لذلك تبدو السماء زرقاء."
+        ),
+        "fullurl": "https://ar.wikipedia.org/wiki/سماء",
+    }]}}
+    snippet = _select_wikipedia_snippet(data, "ليه السما لونها أزرق؟")
+    assert snippet is not None
+    assert "رايلي" in snippet.text
+    assert "المعتقد القديم" not in snippet.text
+    assert "يعتقد البعض" not in snippet.text
+
+
+def test_local_model_answers_general_question_from_grounded_source(tmp_path, monkeypatch):
+    model_file = tmp_path / "model.gguf"
+    model_file.write_bytes(b"test")
+    provider = LocalGGUFProvider(str(model_file))
+
+    async def knowledge(_):
+        return KnowledgeSnippet(
+            "سماء",
+            "تتبعثر الموجات الأقصر من ضوء الشمس في الغلاف الجوي أكثر، فيصل الأزرق للعين من اتجاهات كثيرة.",
+            "https://ar.wikipedia.org/wiki/سماء",
+        )
+
+    class GroundedLlama:
+        def create_chat_completion(self, **kwargs):
+            assert "مصدر موثوق" in kwargs["messages"][-1]["content"]
+            return {"choices": [{"message": {"content": "عشان ضوء الشمس الأزرق بيتشتت في الغلاف الجوي أكتر، فبيوصل لعيننا من كل اتجاه."}}]}
+
+    monkeypatch.setattr(conversation_module, "_wikipedia_knowledge", knowledge)
+    provider._llm = GroundedLlama()
+    reply = asyncio.run(provider.respond(TurnContext("ليه السما لونها أزرق؟", [], "ar-EG", [])))
+    assert "بيوصل لعيننا" in reply.text
+    assert "المصدر: ويكيبيديا — سماء" in reply.text
+
+
+def test_local_model_uses_source_text_when_generation_is_not_grounded(tmp_path, monkeypatch):
+    model_file = tmp_path / "model.gguf"
+    model_file.write_bytes(b"test")
+    provider = LocalGGUFProvider(str(model_file))
+    source_text = "تتبعثر الموجات الأقصر من ضوء الشمس في الغلاف الجوي أكثر، فيصل الضوء الأزرق للعين."
+
+    async def knowledge(_):
+        return KnowledgeSnippet("سماء", source_text, "https://ar.wikipedia.org/wiki/سماء")
+
+    class HallucinatingLlama:
+        def create_chat_completion(self, **_):
+            return {"choices": [{"message": {"content": "عشان السما بتهرب من الشمس كمان بس."}}]}
+
+    monkeypatch.setattr(conversation_module, "_wikipedia_knowledge", knowledge)
+    provider._llm = HallucinatingLlama()
+    reply = asyncio.run(provider.respond(TurnContext("ليه السما لونها أزرق؟", [], "ar-EG", [])))
+    assert source_text in reply.text
+    assert "بتهرب" not in reply.text
+    assert "المصدر: ويكيبيديا — سماء" in reply.text
+
+
+def test_local_model_does_not_guess_when_knowledge_is_unavailable(tmp_path, monkeypatch):
+    model_file = tmp_path / "model.gguf"
+    model_file.write_bytes(b"test")
+    provider = LocalGGUFProvider(str(model_file))
+
+    async def no_knowledge(_):
+        return None
+
+    class MustNotGuess:
+        def create_chat_completion(self, **_):
+            raise AssertionError("an ungrounded factual question must not reach generation")
+
+    monkeypatch.setattr(conversation_module, "_wikipedia_knowledge", no_knowledge)
+    provider._llm = MustNotGuess()
+    reply = asyncio.run(provider.respond(TurnContext("ليه السما لونها أزرق؟", [], "ar-EG", [])))
+    assert "مش واثق" in reply.text
+    assert reply.action.type == ActionType.NONE
 
 
 def test_mixed_food_language_is_disambiguated_and_action_stays_blocked(tmp_path):

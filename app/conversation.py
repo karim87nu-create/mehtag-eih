@@ -14,6 +14,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import threading
 import unicodedata
 from typing import Any
@@ -84,6 +85,13 @@ class TurnContext:
 class GateDecision:
     allowed: bool
     reason: str
+
+
+@dataclass
+class KnowledgeSnippet:
+    title: str
+    text: str
+    url: str
 
 
 class ConversationProvider(ABC):
@@ -201,6 +209,150 @@ def _generated_reply_is_usable(text: str, context: TurnContext, baseline: Provid
     if baseline.style.language == "ar" and not any("ARABIC" in unicodedata.name(char, "") for char in text):
         return False
     return True
+
+
+def _knowledge_query(text: str) -> str:
+    value = _normalize(text)
+    replacements = {
+        "ليه": "سبب",
+        "السما": "السماء",
+        "لونها": "لون",
+        "ازرق": "أزرق",
+        "ايه": "",
+        "يعني": "",
+    }
+    for source, target in replacements.items():
+        value = value.replace(source, target)
+    return " ".join(value.replace("؟", " ").replace("?", " ").split())[:180]
+
+
+def _knowledge_terms(text: str) -> set[str]:
+    stop = {
+        "ايه", "اي", "ليه", "ازاي", "هو", "هي", "ده", "دي", "في", "من", "على", "عن", "و", "يا",
+        "what", "why", "how", "who", "when", "where", "is", "are", "the", "a", "an", "of", "in", "to",
+    }
+    terms: set[str] = set()
+    for raw in re.findall(r"[\w\u0600-\u06ff]+", _normalize(text)):
+        token = raw
+        if token.startswith("ال") and len(token) > 4:
+            token = token[2:]
+        if token not in stop and len(token) >= 3:
+            terms.add(token)
+    return terms
+
+
+def _select_wikipedia_snippet(data: dict[str, Any], question: str) -> KnowledgeSnippet | None:
+    terms = _knowledge_terms(_knowledge_query(question))
+    if not terms:
+        return None
+    ranked: list[tuple[int, dict[str, Any]]] = []
+    for page in ((data.get("query") or {}).get("pages") or []):
+        extract = str(page.get("extract") or "")
+        title = str(page.get("title") or "")
+        if not extract or not title:
+            continue
+        title_norm = _normalize(title)
+        extract_norm = _normalize(extract)
+        matched = {term for term in terms if term in title_norm or term in extract_norm}
+        score = len(matched) + 2 * sum(1 for term in terms if term in title_norm)
+        if len(matched) >= 2 and score >= 3:
+            ranked.append((score, page))
+    if not ranked:
+        return None
+    page = max(ranked, key=lambda item: item[0])[1]
+    extract = str(page.get("extract") or "")
+    sentences = [part.strip() for part in re.split(r"(?<=[.!؟])\s+|\n+", extract) if len(part.strip()) >= 35]
+    strong_evidence = (
+        "تبعثر", "تشتت", "موج", "رايلي", "جزيئ",
+        "scatter", "wavelength", "rayleigh", "molecul",
+    )
+    supporting_evidence = (
+        "سبب", "لان", "حيث", "نتيج", "ضوء", "غلاف", "فيزي",
+        "because", "due", "caused", "means", "atmosphere",
+    )
+    weak_or_historical = (
+        "المعتقد القديم", "يعتقد البعض", "بشكل غير رسمي", "انعكاس ضوء",
+        "old belief", "some believe", "informally", "reflection of light",
+    )
+    sentence_scores: list[tuple[int, int, str]] = []
+    for index, sentence in enumerate(sentences):
+        normalized = _normalize(sentence)
+        overlap = sum(1 for term in terms if term in normalized)
+        strong_hits = sum(1 for marker in strong_evidence if marker in normalized)
+        score = (
+            overlap * 3
+            + 5 * strong_hits
+            + 2 * sum(1 for marker in supporting_evidence if marker in normalized)
+            - 10 * sum(1 for marker in weak_or_historical if marker in normalized)
+        )
+        if overlap or strong_hits:
+            sentence_scores.append((score, -index, sentence))
+    if not sentence_scores:
+        return None
+    chosen = sorted(sentence_scores, reverse=True)[:2]
+    chosen.sort(key=lambda item: -item[1])
+    snippet = " ".join(item[2] for item in chosen)[:900]
+    return KnowledgeSnippet(str(page.get("title")), snippet, str(page.get("fullurl") or ""))
+
+
+def _grounded_reply_is_usable(text: str, knowledge: KnowledgeSnippet) -> bool:
+    """Reject fluent-looking model output that is not anchored in the source."""
+    answer_terms = _knowledge_terms(text)
+    source_terms = _knowledge_terms(knowledge.text)
+    if not answer_terms or not source_terms:
+        return False
+    shared = answer_terms & source_terms
+    minimum_shared = 2 if len(answer_terms) <= 5 else 3
+    return len(shared) >= minimum_shared and len(shared) / len(answer_terms) >= 0.28
+
+
+def _extractive_knowledge_reply(knowledge: KnowledgeSnippet, language: str) -> str:
+    if language == "en":
+        return f"The clearest sourced answer I found is: {knowledge.text}"
+    return f"أوضح إجابة لقيتها في المصدر: {knowledge.text}"
+
+
+async def _wikipedia_knowledge(context: TurnContext) -> KnowledgeSnippet | None:
+    text = context.message.strip()
+    if len(text) > 180 or "@" in text or sum(char.isdigit() for char in text) > 4:
+        return None
+    language = "en" if _style(text).language == "en" else "ar"
+    endpoint = f"https://{language}.wikipedia.org/w/api.php"
+    params = {
+        "action": "query",
+        "generator": "search",
+        "gsrsearch": _knowledge_query(text),
+        "gsrlimit": "3",
+        "prop": "extracts|info",
+        "explaintext": "1",
+        "exchars": "1400",
+        "inprop": "url",
+        "format": "json",
+        "formatversion": "2",
+        "utf8": "1",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=4, headers={"User-Agent": "Maak/1.0 (knowledge support)"}) as client:
+            response = await client.get(endpoint, params=params)
+            response.raise_for_status()
+            initial = _select_wikipedia_snippet(response.json(), text)
+            if not initial:
+                return None
+            detail = await client.get(endpoint, params={
+                "action": "query",
+                "prop": "extracts|info",
+                "titles": initial.title,
+                "explaintext": "1",
+                "inprop": "url",
+                "format": "json",
+                "formatversion": "2",
+                "utf8": "1",
+            })
+            detail.raise_for_status()
+        return _select_wikipedia_snippet(detail.json(), text) or initial
+    except Exception as exc:
+        logger.info("Knowledge lookup unavailable: %s", type(exc).__name__)
+        return None
 
 
 class FallbackProvider(ConversationProvider):
@@ -360,7 +512,11 @@ class OpenAICompatibleProvider(ConversationProvider):
         )
 
 
-def _local_system_prompt(context: TurnContext, baseline: ProviderReply) -> str:
+def _local_system_prompt(
+    context: TurnContext,
+    baseline: ProviderReply,
+    knowledge: KnowledgeSnippet | None = None,
+) -> str:
     style = baseline.style
     if style.language == "en":
         identity = "You are Ma'ak, a smart, practical personal companion. Reply only in natural English."
@@ -375,6 +531,12 @@ def _local_system_prompt(context: TurnContext, baseline: ProviderReply) -> str:
         task = "Tell one complete, clear joke with a punchline in two lines. Do not introduce or explain it." if english else "احكي نكتة مفهومة كاملة لها نهاية مضحكة في سطرين. لا تشرحها ولا تقدم لها."
     elif style.mood == "upset":
         task = "Respond warmly in one or two sentences and offer one small useful step. Do not ask a generic question." if english else "رد بهدوء وتعاطف في جملة أو جملتين، وادّيه خطوة صغيرة مفيدة. لا تسأله سؤالًا عامًا."
+    elif knowledge:
+        task = (
+            "Answer the exact question in one to three clear sentences using only the supplied source. Do not add unsupported facts."
+            if english else
+            "جاوب السؤال نفسه بالمصري الواضح في جملة إلى 3 جمل، واعتمد فقط على المصدر المرفق. ممنوع تضيف معلومة مش موجودة فيه."
+        )
     elif baseline.intent == Intent.NEW_REQUEST and not baseline.action.authorized:
         task = "Give specific advice or options only. The user did not authorize any purchase or action, so do not claim one." if english else "ساعده بنصيحة أو اختيارات محددة فقط. هو لم يأذن بتنفيذ أو شراء أي شيء، فلا تدّعي التنفيذ."
     elif baseline.intent == Intent.NEW_REQUEST:
@@ -466,9 +628,14 @@ class LocalGGUFProvider(ConversationProvider):
                 logger.info("Local conversation model loaded: %s", self.model)
         return self._llm
 
-    def _respond_sync(self, context: TurnContext, baseline: ProviderReply) -> str:
+    def _respond_sync(
+        self,
+        context: TurnContext,
+        baseline: ProviderReply,
+        knowledge: KnowledgeSnippet | None = None,
+    ) -> str:
         llm = self._load()
-        messages: list[dict[str, str]] = [{"role": "system", "content": _local_system_prompt(context, baseline)}]
+        messages: list[dict[str, str]] = [{"role": "system", "content": _local_system_prompt(context, baseline, knowledge)}]
         for item in context.history[-4:]:
             role = item.get("role", "user")
             content = str(item.get("content", ""))[:500]
@@ -479,6 +646,8 @@ class LocalGGUFProvider(ConversationProvider):
             for c in context.active_cases[:5]
         ]
         latest = context.message
+        if knowledge:
+            latest += f"\n\nمصدر موثوق بعنوان «{knowledge.title}»:\n{knowledge.text}"
         if case_summary:
             latest += "\n\nOpen cases (reference only): " + json.dumps(case_summary, ensure_ascii=False)
         messages.append({"role": "user", "content": latest})
@@ -502,14 +671,28 @@ class LocalGGUFProvider(ConversationProvider):
             Intent.PROBLEM,
             Intent.DECISION,
         }
-        if prefer_grounded:
+        knowledge = None
+        if baseline.intent == Intent.GENERAL_QUESTION and not social:
+            knowledge = await _wikipedia_knowledge(context)
+        if baseline.intent == Intent.GENERAL_QUESTION and not social and not knowledge:
+            response_text = baseline.text
+        elif prefer_grounded:
             response_text = baseline.text
         else:
-            response_raw = await asyncio.to_thread(self._respond_sync, context, baseline)
+            response_raw = await asyncio.to_thread(self._respond_sync, context, baseline, knowledge)
             response_text = _remove_canned_opening(response_raw)
-        if not _generated_reply_is_usable(response_text, context, baseline):
+        usable = _generated_reply_is_usable(response_text, context, baseline)
+        if knowledge and usable:
+            usable = _grounded_reply_is_usable(response_text, knowledge)
+        if not usable:
             logger.info("Rejected low-quality local reply for intent=%s", baseline.intent.value)
-            response_text = baseline.text
+            if knowledge:
+                response_text = _extractive_knowledge_reply(knowledge, baseline.style.language)
+            else:
+                response_text = baseline.text
+        if knowledge and response_text != baseline.text:
+            source_label = "Source" if baseline.style.language == "en" else "المصدر"
+            response_text = f"{response_text.rstrip()}\n{source_label}: ويكيبيديا — {knowledge.title}"
         return ProviderReply(
             response_text,
             baseline.intent,
