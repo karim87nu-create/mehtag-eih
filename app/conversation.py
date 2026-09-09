@@ -150,6 +150,10 @@ def _social_kind(text: str) -> str | None:
         return "misunderstanding"
     if any(phrase in normalized for phrase in ("عامل اي", "عامل ايه", "اخبارك", "how are you", "how're you")):
         return "how_are_you"
+    if normalized in {"فل", "زي الفل", "جامد", "عاش", "great", "awesome"}:
+        return "positive"
+    if words & {"غبي", "فاشل", "عبيط", "stupid", "idiot", "useless"}:
+        return "frustrated"
     if words & {"اهلا", "هاي", "hello", "hi", "صباح", "مساء"}:
         return "greeting"
     if words & {"شكرا", "متشكر", "thanks", "thank"}:
@@ -401,6 +405,10 @@ class FallbackProvider(ConversationProvider):
             text = "حقك عليّ، ردي اللي فات ماكانش واضح. قولّي النقطة اللي وقفت معاك وأنا أشرحها مباشرة." if lang != "en" else "That's on me—the last reply wasn't clear. Tell me which part lost you and I'll explain it directly."
         elif social == "how_are_you" and intent == Intent.SMALL_TALK:
             text = "كويس وبكامل تركيزي 😄 إنت عامل إيه؟" if lang != "en" else "Doing well and fully switched on 😄 How are you?"
+        elif social == "positive" and intent == Intent.SMALL_TALK:
+            text = "فل 😄 أنا معاك." if lang != "en" else "Great 😄 I'm with you."
+        elif social == "frustrated" and intent == Intent.SMALL_TALK:
+            text = "حقك تضايق لو ردي كان وحش. قول المطلوب مرة واحدة وأنا هرد عليه مباشرة." if lang != "en" else "Fair reaction if my reply was bad. Say what you need once and I'll answer it directly."
         elif social == "greeting" and intent == Intent.SMALL_TALK:
             text = "أهلًا 👋 قول اللي في بالك." if lang != "en" else "Hi 👋 What's on your mind?"
         elif social == "thanks" and intent == Intent.SMALL_TALK:
@@ -421,6 +429,8 @@ class FallbackProvider(ConversationProvider):
                 text = "I can help with that. Tell me the one constraint that matters most, or say ‘find it’ and I’ll start." if not explicit else "I’ll start looking and I’ll keep the status precise—finding a supplier won’t be shown as contacting one."
             elif lang == "mixed":
                 text = "أقدر أساعدك في ده. قولّي أهم constraint، أو قول `دورلي` وأنا أبدأ." if not explicit else "هبدأ search، وهفرّق بوضوح بين لقيت جهة، تواصلت معاها، ووصل عرض فعلي."
+            elif not explicit and any(term in normalized for term in ("موتوسيكل", "موتوسكل", "سكوتر", "motorcycle", "scooter")):
+                text = "الميزانية واضحة. قولي بس: سكوتر ولا موتوسيكل عادي، جديد ولا مستعمل، وفي أنهي مدينة؟ ولو عايزني أبدأ البحث قول «دورلي»."
             else:
                 text = "أقدر أساعدك في ده. قولّي أهم شرط عندك، أو قول «دورلي» وأنا أبدأ." if not explicit else "هبدأ أدور، وهقولك بدقة: لقيت جهة، اتبعت لها فعلًا، ولا وصل عرض حقيقي."
         elif intent in {Intent.CONTINUATION, Intent.EXTERNAL_EVENT_FOLLOWUP}:

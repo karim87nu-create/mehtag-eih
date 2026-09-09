@@ -60,6 +60,23 @@ def test_common_social_turns_are_natural_and_contextual():
     assert gate_action(greeted_request, []).allowed
 
 
+def test_screenshot_phrases_get_natural_non_refusal_replies():
+    positive = fallback("فل")
+    assert positive.intent == Intent.SMALL_TALK
+    assert "فل" in positive.text
+    assert "فليبيانس" not in positive.text
+
+    frustrated = fallback("غبي")
+    assert frustrated.intent == Intent.SMALL_TALK
+    assert "حقك" in frustrated.text
+
+    motorcycle = fallback("عايز موتوسيكل معايا لحد 50 الف")
+    assert motorcycle.intent == Intent.NEW_REQUEST
+    assert "سكوتر" in motorcycle.text
+    assert "لا أستطيع" not in motorcycle.text
+    assert motorcycle.action.authorized is False
+
+
 def test_repeated_joke_request_gets_a_complete_different_joke():
     first = asyncio.run(FallbackProvider().respond(TurnContext("قولي نكتة", [], "ar-EG", [])))
     second = asyncio.run(FallbackProvider().respond(TurnContext(
