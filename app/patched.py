@@ -230,9 +230,14 @@ def _draft_aware_policy(reply, context):
     # small-talk turns and not executable actions by themselves.
     if draft and _is_draft_detail(context):
         first = len(_draft_segment(context)) == 1 and _is_request_seed(current)
+        # If an older request is already linked to the thread, using
+        # CONTINUATION here would make the base endpoint attach that old case's
+        # card to the new draft. Mark the new draft as NEW_REQUEST while still
+        # proposing no action, so the UI cannot imply we are editing the old case.
+        draft_intent = Intent.NEW_REQUEST if first or context.active_cases else Intent.CONTINUATION
         return ProviderReply(
             _draft_reply_text(context, draft, first),
-            Intent.NEW_REQUEST if first else Intent.CONTINUATION,
+            draft_intent,
             1.0,
             safe.style,
             ActionProposal(ActionType.NONE, False, 1.0),
