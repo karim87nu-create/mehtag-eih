@@ -103,8 +103,13 @@ def _draft_segment(context) -> list[str]:
         return []
 
     segment = []
-    for turn in turns[seed_index:current_index + 1]:
+    for index, turn in enumerate(turns[seed_index:current_index + 1], start=seed_index):
         if _is_execute_control(turn) or _is_cancel_control(turn) or _is_small_talk(turn):
+            continue
+        # Questions inside a draft belong to conversation, not to the eventual
+        # executable request text. The seed itself may be phrased conversationally,
+        # but later question turns must never be silently converted into constraints.
+        if index > seed_index and ("?" in turn or "؟" in turn):
             continue
         segment.append(turn)
     return segment
