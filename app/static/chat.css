@@ -99,6 +99,9 @@
 .chat-context-card small{color:var(--muted);font-size:12px}
 .chat-context-card b{font-size:14px;line-height:1.55}
 .chat-context-card span{color:var(--muted);font-size:12px}
+.chat-image-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:2px 0 4px 45px;direction:ltr}
+.chat-image-grid a{display:block;overflow:hidden;border-radius:18px;background:rgba(255,255,255,.78);border:1px solid rgba(255,255,255,.9);box-shadow:var(--shadow-sm);aspect-ratio:4/3}
+.chat-image-grid img{display:block;width:100%;height:100%;object-fit:cover}
 @keyframes chatIn{from{opacity:0;transform:translateY(9px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
 @keyframes chatDot{0%,60%,100%{transform:translateY(0);opacity:.35}30%{transform:translateY(-4px);opacity:1}}
 @keyframes micPulse{0%,100%{box-shadow:0 0 0 0 rgba(164,63,63,.08)}50%{box-shadow:0 0 0 10px rgba(164,63,63,.08)}}
@@ -111,5 +114,6 @@
   .chat-message.assistant .bubble{max-width:calc(100% - 43px)}
   .assistant-avatar{width:34px;height:34px;min-width:34px}
   .conversation-composer{bottom:8px}
+  .chat-image-grid{margin-left:14px;grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media(prefers-reduced-motion:reduce){.entering,.thinking-inline i,.voice-button.listening{animation:none!important}}
