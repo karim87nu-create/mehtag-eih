@@ -39,8 +39,10 @@ jobs:
           assert first['action']['status']=='EXECUTED', first
           assert 'موبايل' in first_title and '20' in first_title and 'لابتوب' not in first_title, first_title
 
-          post('عايز لابتوب')
-          post('30 ألف')
+          new_seed=post('عايز لابتوب')
+          assert new_seed.get('card') is None, new_seed
+          new_detail=post('30 ألف')
+          assert new_detail.get('card') is None, new_detail
           second=post('ابدأ')
           second_title=((second.get('card') or {}).get('title') or '')
           assert second['action']['status']=='EXECUTED', second
