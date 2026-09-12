@@ -1,15 +1,15 @@
 """Production entrypoint with a narrow draft-preservation layer.
 
-The base conversation model remains responsible for general chat.  This module
-only hardens one operational invariant: a request built over several short
-turns must keep its details until the customer explicitly says to start.
+The base conversation model remains responsible for general chat. This module
+hardens request-draft boundaries and keeps deterministic/simple turns off the
+slow local model path when we already know the truthful answer.
 """
 from __future__ import annotations
 
 import re
 
 from . import main as main_module
-from .conversation import ActionProposal, ActionType, Intent, ProviderReply
+from .conversation import ActionProposal, ActionType, Intent, ProviderReply, ResponseStyle
 
 
 app = main_module.app
@@ -22,6 +22,10 @@ _AR_REQUEST_START = re.compile(
     re.IGNORECASE,
 )
 _EN_REQUEST_START = re.compile(r"\b(?:i\s+want|i\s+need|looking\s+for)\b", re.IGNORECASE)
+_MEDIA_REQUEST_RE = re.compile(
+    r"(?:وريني|ورني|اعرض(?:لي)?|فرجني|show\s+me).{0,28}(?:صور|صوره|صورة|photos?|pictures?|images?)",
+    re.IGNORECASE,
+)
 
 _CONTROL_EXECUTE = {
     "ابدأ", "ابدا", "ابدأ البحث", "ابدا البحث", "ابدأ دلوقتي", "ابدا دلوقتي",
@@ -37,6 +41,16 @@ _SMALL_TALK = {
     "شكرا", "شكرًا", "متشكر", "تسلم", "تمام شكرا", "thanks", "thank you",
     "اهلا", "أهلا", "هاي", "hello", "hi", "باي", "bye",
 }
+_ATTENTION_CUES = {
+    "بص", "بصي", "اسمع", "اسمعني", "شوف", "شوفي", "look", "listen",
+}
+_CONVERSATION_PREFIXES = (
+    "ايه ", "إيه ", "ازاي ", "إزاي ", "ليه ", "مين ", "فين ", "امتى ", "إمتى ",
+    "هل ", "وريني ", "ورني ", "اعرض ", "اعرضلي ", "فرجني ", "اشرح ", "اشرحلي ",
+    "قولي ", "قوللي ", "احكيلي ", "فهمني ", "عرفني ",
+    "what ", "why ", "how ", "who ", "where ", "when ", "which ", "show me ",
+    "explain ", "tell me ", "can you ", "could you ",
+)
 _AREAS = (
     "مدينة نصر", "التجمع", "القاهرة الجديدة", "مصر الجديدة", "المعادي",
     "مدينتي", "الرحاب", "الدقي", "المهندسين", "الزمالك", "الهرم",
@@ -72,6 +86,25 @@ def _is_small_talk(text: str) -> bool:
     return _norm(text) in {_norm(item) for item in _SMALL_TALK}
 
 
+def _is_attention_cue(text: str) -> bool:
+    return _norm(text) in {_norm(item) for item in _ATTENTION_CUES}
+
+
+def _is_media_request(text: str) -> bool:
+    return bool(_MEDIA_REQUEST_RE.search(_clean(text)))
+
+
+def _is_conversation_only_turn(text: str) -> bool:
+    """Turns that must be answered, never silently turned into request details."""
+    current = _clean(text)
+    normalized = _norm(current)
+    if "?" in current or "؟" in current:
+        return True
+    if _is_attention_cue(current) or _is_media_request(current):
+        return True
+    return any(normalized.startswith(_norm(prefix)) for prefix in _CONVERSATION_PREFIXES)
+
+
 def _user_turns(context) -> list[str]:
     turns = [
         _clean(str(item.get("content") or ""))
@@ -87,7 +120,7 @@ def _draft_segment(context) -> list[str]:
     turns = _user_turns(context)
     current_index = len(turns) - 1
 
-    # A previous explicit execute/cancel command closes the older draft.  This
+    # A previous explicit execute/cancel command closes the older draft. This
     # prevents details from an already-created or abandoned request leaking into
     # a later one.
     start_window = 0
@@ -106,10 +139,10 @@ def _draft_segment(context) -> list[str]:
     for index, turn in enumerate(turns[seed_index:current_index + 1], start=seed_index):
         if _is_execute_control(turn) or _is_cancel_control(turn) or _is_small_talk(turn):
             continue
-        # Questions inside a draft belong to conversation, not to the eventual
-        # executable request text. The seed itself may be phrased conversationally,
-        # but later question turns must never be silently converted into constraints.
-        if index > seed_index and ("?" in turn or "؟" in turn):
+        # Questions and conversational commands can happen while a draft is
+        # open, but they are not constraints. Keep the draft alive without
+        # contaminating the executable request text.
+        if index > seed_index and _is_conversation_only_turn(turn):
             continue
         segment.append(turn)
     return segment
@@ -146,12 +179,17 @@ def _is_draft_detail(context) -> bool:
     current = _clean(context.message)
     if _is_request_seed(current):
         return True
-    if _is_small_talk(current) or _is_execute_control(current) or _is_cancel_control(current):
+    if (
+        _is_small_talk(current)
+        or _is_execute_control(current)
+        or _is_cancel_control(current)
+        or _is_conversation_only_turn(current)
+    ):
         return False
     # Request details are normally short: condition, budget, area, colour, size,
-    # etc.  Long/question turns remain model-owned.
+    # etc. Conversational commands and questions were excluded above.
     words = current.split()
-    if len(words) <= 8 and "?" not in current and "؟" not in current:
+    if len(words) <= 8:
         return True
     return any(area in current for area in _AREAS) or _looks_like_budget(current)
 
@@ -163,8 +201,22 @@ def _draft_reply_text(context, draft: str, first: bool) -> str:
     return f"تمام، ضفت «{current}». الطلب لحد دلوقتي: {draft}. لما تخلص قول «ابدأ»."
 
 
+def _placeholder(intent: Intent = Intent.CONTINUATION) -> ProviderReply:
+    """Cheap reply used only when the policy below deterministically replaces it."""
+    return ProviderReply(
+        "",
+        intent,
+        1.0,
+        ResponseStyle(),
+        ActionProposal(ActionType.NONE, False, 1.0),
+        provider="draft-fast-path",
+        model=None,
+        degraded=False,
+    )
+
+
 class DraftAwareProvider:
-    """Expose truthful provider metadata while leaving general chat untouched."""
+    """Keep deterministic turns fast while leaving open-ended chat to the model."""
 
     def __init__(self, wrapped):
         self.wrapped = wrapped
@@ -172,9 +224,54 @@ class DraftAwareProvider:
         self.degraded = bool(getattr(wrapped, "degraded", False))
 
     async def respond(self, context):
-        # The policy wrapper below owns the deterministic draft behaviour.  We
-        # still invoke the configured provider so unrelated language behaviour
-        # remains identical to the base application.
+        current = _clean(context.message)
+        draft = _draft_text(context)
+
+        # These paths are fully determined by the server policy below. Running a
+        # 1.7B local model first only adds seconds of latency and cannot improve
+        # the result.
+        if draft and (_is_execute_control(current) or _is_cancel_control(current) or _is_draft_detail(context)):
+            return _placeholder(Intent.NEW_REQUEST if _is_request_seed(current) else Intent.CONTINUATION)
+        if _is_execute_control(current) and not draft:
+            return _placeholder(Intent.CONTINUATION)
+        if _is_small_talk(current) and context.active_cases:
+            return _placeholder(Intent.SMALL_TALK)
+
+        # Very short attention turns should feel instant and natural.
+        if _is_attention_cue(current):
+            return ProviderReply(
+                "معاك، قول.",
+                Intent.SMALL_TALK,
+                1.0,
+                ResponseStyle(),
+                ActionProposal(ActionType.NONE, False, 1.0),
+                provider="draft-fast-path",
+                model=None,
+                degraded=False,
+            )
+
+        # The current web client cannot render internet image results yet. Say
+        # that plainly instead of swallowing the command as a draft detail or
+        # replying with a generic "continue" message.
+        if _is_media_request(current):
+            return ProviderReply(
+                "طلبك واضح. عرض صور من الإنترنت جوه المحادثة لسه مش متوصل، فمش هعتبر كلامك تكملة لطلب قديم. أقدر أساعدك بالمواصفات أو نكمّل كطلب بحث/شراء لو ده هدفك.",
+                Intent.GENERAL_QUESTION,
+                1.0,
+                ResponseStyle(),
+                ActionProposal(ActionType.NONE, False, 1.0),
+                provider="draft-fast-path",
+                model=None,
+                degraded=False,
+            )
+
+        # Greetings/thanks are already handled well by the deterministic
+        # fallback; do not spend several seconds generating them locally.
+        if _is_small_talk(current):
+            fallback = getattr(self.wrapped, "fallback", None)
+            if fallback is not None:
+                return await fallback.respond(context)
+
         return await self.wrapped.respond(context)
 
 
@@ -188,7 +285,7 @@ def _draft_aware_policy(reply, context):
     draft = _draft_text(context)
     current = _clean(context.message)
 
-    # Cancelling a pending draft is a hard boundary.  It never creates a case,
+    # Cancelling a pending draft is a hard boundary. It never creates a case,
     # and a later bare "ابدأ" cannot resurrect the abandoned request.
     if draft and _is_cancel_control(current):
         return ProviderReply(
@@ -203,7 +300,7 @@ def _draft_aware_policy(reply, context):
         )
 
     # A bare start command without a live draft is never enough authority to
-    # create a request.  This also prevents an abandoned draft from being
+    # create a request. This also prevents an abandoned draft from being
     # resurrected through the base policy's short-imperative context repair.
     if _is_execute_control(current) and not draft:
         return ProviderReply(
@@ -252,7 +349,7 @@ def _draft_aware_policy(reply, context):
         )
 
     # Keep thanks after an active request contextual instead of resetting to a
-    # greeting.  No business action is ever proposed here.
+    # greeting. No business action is ever proposed here.
     if _is_small_talk(current) and context.active_cases:
         return ProviderReply(
             "العفو، أنا متابع الطلب معاك.",
