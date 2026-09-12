@@ -12,13 +12,17 @@ from app.conversation import (
 )
 from app.db import Base, engine
 from app.main import app
-from app.models import ConversationAction, ConversationMessage, ConversationThread, Request
+from app.execution_models import ExecutionNotice
+from app.models import ConversationAction, ConversationCaseLink, ConversationMessage, ConversationThread, Request
 
 
 client = TestClient(app)
+CUSTOMER_ONE = "2735a345-35e5-449c-aaf5-292f089f9966"
+CUSTOMER_TWO = "7666e584-4976-4a11-8288-c03df9d9b74c"
 
 
 def reset():
+    client.cookies.clear()
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
 
@@ -147,15 +151,8 @@ def test_local_model_rejects_repetitive_nonsense_and_bad_history(tmp_path, monke
             return {"choices": [{"message": {"content": "أنا متأكد."}}]}
 
     provider._llm = BadLlama()
-    async def knowledge(_):
-        return KnowledgeSnippet(
-            "سماء",
-            "تتبعثر الموجات الأقصر من ضوء الشمس في الغلاف الجوي أكثر، فيصل الضوء الأزرق للعين.",
-            "https://ar.wikipedia.org/wiki/سماء",
-        )
-    monkeypatch.setattr(conversation_module, "_wikipedia_knowledge", knowledge)
     context = TurnContext(
-        "ليه السما لونها أزرق؟",
+        "كمّل معايا في الكلام",
         [{"role": "assistant", "content": "أنا متأكد."}],
         "ar-EG", [],
     )
@@ -201,48 +198,72 @@ def test_wikipedia_result_rejects_old_belief_in_favour_of_scientific_evidence():
     assert "يعتقد البعض" not in snippet.text
 
 
-def test_local_model_answers_general_question_from_grounded_source(tmp_path, monkeypatch):
+def test_sky_answer_requires_scattering_and_excludes_ultraviolet_claims():
+    data = {"query": {"pages": [{
+        "title": "سماء",
+        "extract": (
+            "السماء زرقاء لأن الغلاف الجوي يمتص الأشعة فوق البنفسجية القادمة من الشمس. "
+            "طبقًا لقانون رايلي تتبعثر الموجات الأقصر من ضوء الشمس في الغلاف الجوي بدرجة أكبر. "
+            "ويصل الضوء الأزرق المتبعثر إلى العين من اتجاهات كثيرة."
+        ),
+        "fullurl": "https://ar.wikipedia.org/wiki/سماء",
+    }]}}
+    snippet = _select_wikipedia_snippet(data, "ليه السما لونها أزرق؟")
+    assert snippet is not None
+    assert "تتبعثر" in snippet.text
+    assert "فوق البنفسجية" not in snippet.text
+
+
+def test_sky_answer_refuses_source_without_scattering_evidence():
+    data = {"query": {"pages": [{
+        "title": "سماء",
+        "extract": "السماء زرقاء لأن الغلاف الجوي يمتص الأشعة فوق البنفسجية القادمة من الشمس.",
+        "fullurl": "https://ar.wikipedia.org/wiki/سماء",
+    }]}}
+    assert _select_wikipedia_snippet(data, "ليه السما لونها أزرق؟") is None
+
+
+def test_factual_general_question_uses_source_without_local_generation(tmp_path, monkeypatch):
     model_file = tmp_path / "model.gguf"
     model_file.write_bytes(b"test")
     provider = LocalGGUFProvider(str(model_file))
-
-    async def knowledge(_):
-        return KnowledgeSnippet(
-            "سماء",
-            "تتبعثر الموجات الأقصر من ضوء الشمس في الغلاف الجوي أكثر، فيصل الأزرق للعين من اتجاهات كثيرة.",
-            "https://ar.wikipedia.org/wiki/سماء",
-        )
-
-    class GroundedLlama:
-        def create_chat_completion(self, **kwargs):
-            assert "مصدر موثوق" in kwargs["messages"][-1]["content"]
-            return {"choices": [{"message": {"content": "عشان ضوء الشمس الأزرق بيتشتت في الغلاف الجوي أكتر، فبيوصل لعيننا من كل اتجاه."}}]}
-
-    monkeypatch.setattr(conversation_module, "_wikipedia_knowledge", knowledge)
-    provider._llm = GroundedLlama()
-    reply = asyncio.run(provider.respond(TurnContext("ليه السما لونها أزرق؟", [], "ar-EG", [])))
-    assert "بيوصل لعيننا" in reply.text
-    assert "المصدر: ويكيبيديا — سماء" in reply.text
-
-
-def test_local_model_uses_source_text_when_generation_is_not_grounded(tmp_path, monkeypatch):
-    model_file = tmp_path / "model.gguf"
-    model_file.write_bytes(b"test")
-    provider = LocalGGUFProvider(str(model_file))
-    source_text = "تتبعثر الموجات الأقصر من ضوء الشمس في الغلاف الجوي أكثر، فيصل الضوء الأزرق للعين."
+    source_text = "تتبعثر الموجات الأقصر من ضوء الشمس في الغلاف الجوي أكثر، فيصل الأزرق للعين من اتجاهات كثيرة."
 
     async def knowledge(_):
         return KnowledgeSnippet("سماء", source_text, "https://ar.wikipedia.org/wiki/سماء")
 
-    class HallucinatingLlama:
+    class MustNotGenerate:
         def create_chat_completion(self, **_):
-            return {"choices": [{"message": {"content": "عشان السما بتهرب من الشمس كمان بس."}}]}
+            raise AssertionError("factual source text must not be rewritten by the local model")
 
     monkeypatch.setattr(conversation_module, "_wikipedia_knowledge", knowledge)
-    provider._llm = HallucinatingLlama()
+    provider._llm = MustNotGenerate()
     reply = asyncio.run(provider.respond(TurnContext("ليه السما لونها أزرق؟", [], "ar-EG", [])))
     assert source_text in reply.text
-    assert "بتهرب" not in reply.text
+    assert "المصدر: ويكيبيديا — سماء" in reply.text
+
+
+def test_local_model_cannot_attach_citation_to_ultraviolet_hallucination(tmp_path, monkeypatch):
+    model_file = tmp_path / "model.gguf"
+    model_file.write_bytes(b"test")
+    provider = LocalGGUFProvider(str(model_file))
+    source_text = "تتبعثر الموجات الأقصر من ضوء الشمس في الغلاف الجوي أكثر، فيصل الضوء الأزرق للعين."
+    called = {"value": False}
+
+    async def knowledge(_):
+        return KnowledgeSnippet("سماء", source_text, "https://ar.wikipedia.org/wiki/سماء")
+
+    class UltravioletHallucination:
+        def create_chat_completion(self, **_):
+            called["value"] = True
+            return {"choices": [{"message": {"content": "السماء زرقاء لأن الغلاف الجوي بيمتص الأشعة فوق البنفسجية من ضوء الشمس."}}]}
+
+    monkeypatch.setattr(conversation_module, "_wikipedia_knowledge", knowledge)
+    provider._llm = UltravioletHallucination()
+    reply = asyncio.run(provider.respond(TurnContext("ليه السما لونها أزرق؟", [], "ar-EG", [])))
+    assert called["value"] is False
+    assert source_text in reply.text
+    assert "فوق البنفسجية" not in reply.text
     assert "المصدر: ويكيبيديا — سماء" in reply.text
 
 
@@ -281,11 +302,14 @@ def test_mixed_food_language_is_disambiguated_and_action_stays_blocked(tmp_path)
     model_file.write_bytes(b"test")
     provider = LocalGGUFProvider(str(model_file))
 
-    class MustNotGenerate:
-        def create_chat_completion(self, **_):
-            raise AssertionError("vetted semantic reply must bypass unreliable generation")
+    class ContextualLlama:
+        def create_chat_completion(self, **kwargs):
+            prompt = kwargs["messages"][0]["content"]
+            assert "أكل خفيف" in prompt
+            assert "وليست إضاءة" in prompt
+            return {"choices": [{"message": {"content": "ممكن أومليت بالخضار أو زبادي بشوفان؛ دول عشا light، ومش هاطلب حاجة."}}]}
 
-    provider._llm = MustNotGenerate()
+    provider._llm = ContextualLlama()
     reply = asyncio.run(provider.respond(context))
     assert "أومليت" in reply.text
     assert "إضاءة" not in reply.text
@@ -338,7 +362,7 @@ def test_local_model_preserves_explicit_customer_authorization(tmp_path):
 def test_chat_persists_thread_messages_and_blocks_unwarranted_action(monkeypatch):
     reset()
     monkeypatch.setattr(main_module, "conversation_provider", FallbackProvider())
-    response = client.post("/api/chat", json={"message":"قولّي نكتة", "customer_ref":"cust-1", "locale":"ar-EG"})
+    response = client.post("/api/chat", json={"message":"قولّي نكتة", "locale":"ar-EG"}, headers={"X-Customer-Ref": CUSTOMER_ONE})
     assert response.status_code == 200
     body = response.json()
     assert body["intent"] == "SMALL_TALK"
@@ -352,9 +376,41 @@ def test_chat_persists_thread_messages_and_blocks_unwarranted_action(monkeypatch
         assert action.status == "BLOCKED"
         assert db.query(Request).count() == 0
 
-    history = client.get(f"/api/conversations/{body['thread_id']}?customer_ref=cust-1")
+    history = client.get(f"/api/conversations/{body['thread_id']}")
     assert history.status_code == 200
     assert [m["role"] for m in history.json()["messages"]] == ["user", "assistant"]
+
+
+def test_main_app_serves_owned_execution_evidence_to_the_chat_ui():
+    reset()
+    home = client.get("/")
+    assert home.status_code == 200
+    assert home.text.count('/static/execution.js') == 1
+
+    with main_module.SessionLocal() as db:
+        thread = ConversationThread(id="thread-evidence", customer_ref=CUSTOMER_ONE)
+        request_row = Request(customer_ref=CUSTOMER_ONE, raw_text="دورلي على سباك", item="سباك", status="DISCOVERING")
+        db.add_all([thread, request_row])
+        db.commit()
+        db.add(ConversationCaseLink(
+            thread_id=thread.id, case_type="REQUEST", case_id=request_row.id,
+        ))
+        db.add(ExecutionNotice(
+            thread_id=thread.id, request_id=request_row.id,
+            event_key="test-evidence", content="وصل رد مؤكد من الجهة.",
+        ))
+        db.commit()
+
+    response = client.get(
+        "/api/execution/conversations/thread-evidence", headers={"X-Customer-Ref": CUSTOMER_ONE}
+    )
+    assert response.status_code == 200
+    assert response.json()["notices"] == [{"id": 1, "content": "وصل رد مؤكد من الجهة."}]
+    assert response.json()["requests"][0]["status"] == "DISCOVERING"
+    other = TestClient(app)
+    assert other.get(
+        "/api/execution/conversations/thread-evidence", headers={"X-Customer-Ref": CUSTOMER_TWO}
+    ).status_code == 404
 
 
 def test_explicit_request_runs_discovery_but_never_claims_outreach(monkeypatch):
@@ -364,7 +420,7 @@ def test_explicit_request_runs_discovery_but_never_claims_outreach(monkeypatch):
         return [{"external_id":"supplier-1", "name":"جهة متاحة", "website":"https://example.test", "source":"test"}]
     monkeypatch.setattr(main_module, "discover_businesses", fake_discovery)
 
-    response = client.post("/api/chat", json={"message":"دورلي على سباك في المعادي", "customer_ref":"cust-2"})
+    response = client.post("/api/chat", json={"message":"دورلي على سباك في المعادي"}, headers={"X-Customer-Ref": CUSTOMER_TWO})
     assert response.status_code == 200
     body = response.json()
     assert body["action"]["status"] == "EXECUTED"

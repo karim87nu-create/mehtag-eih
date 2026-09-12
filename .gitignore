@@ -1,6 +1,8 @@
+.env
 .venv/
 __pycache__/
 *.py[cod]
 *.db
 .pytest_cache/
-.env
+.pytest-tmp*/
+.railway-codex-debug-key*

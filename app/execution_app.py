@@ -30,18 +30,22 @@ app = core.app
 core.route_request_to_business = execution.route_request_to_business
 core.deliver_request = execution.deliver_request
 _search_error = ContextVar('execution_search_error', default=None)
-async def discover_businesses(text, area=None):
+async def discover_businesses(text, area=None, locale_context=None):
     try:
-        return await search_businesses(text, area)
+        return await search_businesses(text, area, locale_context)
     except Exception as exc:
         _search_error.set(type(exc).__name__)
         return []
 core.discover_businesses = discover_businesses
 _original_start = core.start_request_from_conversation
-async def start_request_from_conversation(db, text):
+async def start_request_from_conversation(
+    db, text, customer_ref, locale_context=None, source_turn_id=None,
+):
     token = _search_error.set(None)
     try:
-        row = await _original_start(db, text)
+        row = await _original_start(
+            db, text, customer_ref, locale_context, source_turn_id,
+        )
         # Complete the execution envelope from the existing aggregated draft text.
         # Do not replace the draft or create another Request.
         if row.budget is None:
@@ -93,7 +97,8 @@ async def execution_boundaries(request: HTTPRequest, call_next):
     response = await call_next(request)
     if path == '/' and response.status_code == 200:
         body = b''.join([part async for part in response.body_iterator])
-        body = body.replace(b'</body>', b'<script src="/static/execution.js" defer></script></body>')
+        if b'/static/execution.js' not in body:
+            body = body.replace(b'</body>', b'<script src="/static/execution.js" defer></script></body>')
         headers = dict(response.headers); headers.pop('content-length', None)
         return HTMLResponse(body, headers=headers, status_code=response.status_code)
     return response
@@ -102,13 +107,21 @@ _original_lifespan = app.router.lifespan_context
 @asynccontextmanager
 async def execution_lifespan(application):
     async with _original_lifespan(application):
-        execution.recover_interrupted()
+        execution.worker_started()
+        try:
+            execution.recover_interrupted()
+        except Exception as exc:
+            execution.worker_failed(exc)
+            logging.exception('Execution recovery failed')
         async def run():
             while True:
                 try:
                     await asyncio.to_thread(execution.worker_tick)
-                except Exception:
+                except Exception as exc:
+                    execution.worker_failed(exc)
                     logging.exception('Execution worker iteration failed')
+                else:
+                    execution.worker_succeeded()
                 await asyncio.sleep(2)
         task = asyncio.create_task(run())
         try:
@@ -212,6 +225,8 @@ async def receive_offer(channel_id:int, request:HTTPRequest, db=Depends(core.get
     if not job or job.status not in ('SENDING','SENT','UNCERTAIN'):
         raise HTTPException(409,'No dispatched request matches this reply')
     req=db.get(Request,job.request_id)
+    if not req or not core.canonical_customer_ref(getattr(req, 'customer_ref', None)):
+        raise HTTPException(409, 'Request owner is unavailable')
     link=db.query(MerchantLink).filter_by(request_id=req.id,business_id=job.business_id).first()
     if not link or datetime.utcnow()>link.created_at+timedelta(hours=24): raise HTTPException(410,'Request link expired')
     if req.status not in ('DISCOVERING','SUPPLY_FOUND_NO_CHANNEL','NO_REACHABLE_SUPPLY','WAITING_OFFERS','OFFER_FOUND'):
@@ -235,27 +250,14 @@ async def receive_offer(channel_id:int, request:HTTPRequest, db=Depends(core.get
     execution.refresh_notices(db)
     return {'accepted':True,'offer_id':offer.id,'status':status}
 
-@app.get('/api/execution/conversations/{thread_id}')
-def updates(thread_id:str, customer_ref:str, db=Depends(core.get_db)):
-    thread=db.get(ConversationThread,thread_id)
-    if not thread: raise HTTPException(404,'Conversation not found')
-    if thread.customer_ref!=customer_ref: raise HTTPException(403,'Conversation does not belong to this customer')
-    notices=db.query(ExecutionNotice).filter_by(thread_id=thread_id).order_by(ExecutionNotice.id).all()
-    cards=[]
-    for link in db.query(ConversationCaseLink).filter_by(thread_id=thread_id,case_type='REQUEST'):
-        req=db.get(Request,link.case_id)
-        if not req: continue
-        leads=[]
-        for attempt in db.query(ReachAttempt).filter_by(request_id=req.id):
-            biz=db.get(Business,attempt.business_id)
-            if biz: leads.append({'name':biz.name,'source':biz.source,'website':biz.website,'status':attempt.status})
-        cards.append({'request_id':req.id,'status':req.status,'card':core.honest_request_card(req),'leads':leads})
-    return {'notices':[{'id':n.id,'content':n.content} for n in notices], 'requests':cards,
-            'attribution':'© OpenStreetMap contributors · ODbL; search leads are not availability or price guarantees'}
-
 @app.get('/api/execution/health')
 def execution_health(db=Depends(core.get_db)):
-    return {'version':'execution-v1','persistent_database':str(engine.url.database or '').startswith('/data/'),'verified_channels':db.query(VerifiedChannel).filter_by(status='VERIFIED').count(),
-            'queued':db.query(OutboundJob).filter_by(status='QUEUED').count(),
-            'uncertain':db.query(OutboundJob).filter_by(status='UNCERTAIN').count(),
-            'provider':core.conversation_provider.name,'degraded':core.conversation_provider.degraded}
+    worker = execution.worker_health()
+    payload = {'version':'execution-v1','persistent_database':str(engine.url.database or '').startswith('/data/'),'verified_channels':db.query(VerifiedChannel).filter_by(status='VERIFIED').count(),
+               'queued':db.query(OutboundJob).filter_by(status='QUEUED').count(),
+               'uncertain':db.query(OutboundJob).filter_by(status='UNCERTAIN').count(),
+               'provider':core.conversation_provider.name,'degraded':core.conversation_provider.degraded,
+               'worker':worker}
+    if not worker['healthy']:
+        return JSONResponse(payload, status_code=503)
+    return payload

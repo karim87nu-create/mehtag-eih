@@ -3,13 +3,13 @@
   const shown = new Set(); let running = false;
   async function poll() {
     if (running || document.hidden) return;
-    let id, customer;
-    try { id=localStorage.getItem('maak_conversation_thread_v1'); customer=localStorage.getItem('maak_customer_ref_v1'); } catch (_) { return; }
-    if (!id || !customer) return;
+    let id;
+    try { id=localStorage.getItem('maak_conversation_thread_v1'); } catch (_) { return; }
+    if (!id) return;
     const thread=document.getElementById('chatThread'); if (!thread) return;
     running=true;
     try {
-      const response=await fetch(`/api/execution/conversations/${encodeURIComponent(id)}?customer_ref=${encodeURIComponent(customer)}`,{cache:'no-store'});
+      const response=await fetch(`/api/execution/conversations/${encodeURIComponent(id)}`,{cache:'no-store',credentials:'same-origin'});
       if (!response.ok) return;
       const data=await response.json();
       if (localStorage.getItem('maak_conversation_thread_v1')!==id) return;

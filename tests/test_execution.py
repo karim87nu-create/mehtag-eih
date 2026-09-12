@@ -1,9 +1,12 @@
 import json
 import time
 import socket
+import threading
 import pytest
 from fastapi.testclient import TestClient
+import app.main as main_module
 from app import execution, execution_transport
+from app import execution_app
 from app.execution_app import app
 from app.db import Base, engine, SessionLocal
 from app.models import (Business, BusinessActivation, IntegrationEndpoint, Request, ReachAttempt,
@@ -11,9 +14,11 @@ from app.models import (Business, BusinessActivation, IntegrationEndpoint, Reque
 from app.execution_models import VerifiedChannel, OutboundJob, ExecutionNotice
 
 client=TestClient(app)
+CUSTOMER = "404b7471-40d7-4ea4-ab33-c52e431b3437"
 
 @pytest.fixture(autouse=True)
 def reset(monkeypatch):
+    client.cookies.clear()
     Base.metadata.drop_all(engine); Base.metadata.create_all(engine)
     monkeypatch.setenv('BASE_URL','https://maak.example')
     monkeypatch.setenv('MAAK_EXECUTION_ADMIN_TOKEN','test-admin')
@@ -22,8 +27,8 @@ def reset(monkeypatch):
 def setup(verified=True):
     with SessionLocal() as db:
         biz=Business(name='Test merchant',website='https://merchant.example')
-        req=Request(raw_text='موتوسيكل جديد في مصر الجديدة بحدود 70000',item='موتوسيكل جديد',budget=70000,area='مصر الجديدة',status='SUPPLY_FOUND_NO_CHANNEL')
-        thread=ConversationThread(id='thread-1',customer_ref='customer-1')
+        req=Request(customer_ref=CUSTOMER,raw_text='موتوسيكل جديد في مصر الجديدة بحدود 70000',item='موتوسيكل جديد',budget=70000,area='مصر الجديدة',status='SUPPLY_FOUND_NO_CHANNEL')
+        thread=ConversationThread(id='thread-1',customer_ref=CUSTOMER)
         db.add_all([biz,req,thread]);db.commit()
         db.add(ConversationCaseLink(thread_id=thread.id,case_type='REQUEST',case_id=req.id))
         if verified:
@@ -69,9 +74,9 @@ def test_success_is_acknowledged_once_and_updates_same_thread(monkeypatch):
         assert db.get(TransportDelivery,delivery).provider_ref=='merchant-receipt-1'
         assert db.query(ExecutionNotice).count()==1
         assert db.query(ConversationMessage).one().thread_id=='thread-1'
-    response=client.get('/api/execution/conversations/thread-1?customer_ref=customer-1')
+    response=client.get('/api/execution/conversations/thread-1',headers={'X-Customer-Ref':CUSTOMER})
     assert len(response.json()['notices'])==1
-    assert client.get('/api/execution/conversations/thread-1?customer_ref=wrong').status_code==403
+    assert TestClient(app).get('/api/execution/conversations/thread-1',headers={'X-Customer-Ref':'6566f7f7-9d00-4ae2-962a-70b765946cf6'}).status_code==404
 
 
 @pytest.mark.parametrize('response',[{}, {'accepted':True}, {'accepted':False}, {'accepted':True,'idempotency_key':'wrong','message_id':'x'}])
@@ -180,8 +185,29 @@ def test_channel_challenge_required(monkeypatch):
     assert client.post('/api/execution/admin/channels',json=payload,headers={'Authorization':'Bearer test-admin'}).json()['status']=='VERIFIED'
 
 
-def test_script_is_loaded_without_modifying_home_template():
-    assert '/static/execution.js' in client.get('/').text
+def test_script_is_loaded_once_through_execution_entrypoint():
+    assert client.get('/').text.count('/static/execution.js') == 1
+
+
+def test_main_entrypoint_activates_verified_routes_and_worker_lifespan(monkeypatch):
+    paths = [getattr(route, 'path', '') for route in main_module.app.router.routes]
+    assert paths.count('/api/execution/health') == 1
+    assert paths.count('/api/execution/conversations/{thread_id}') == 1
+    assert paths.count('/api/execution/admin/channels') == 1
+    assert paths.count('/api/execution/channels/{channel_id}/offers') == 1
+    assert main_module.app.router.lifespan_context is execution_app.execution_lifespan
+
+    recovered = []
+    worker_ran = threading.Event()
+    monkeypatch.setattr(execution, 'recover_interrupted', lambda: recovered.append(True))
+    monkeypatch.setattr(execution, 'worker_tick', worker_ran.set)
+    with TestClient(main_module.app) as running:
+        health = running.get('/api/execution/health')
+        assert health.status_code == 200
+        assert health.json()['version'] == 'execution-v1'
+        assert running.post('/api/execution/admin/channels', json={}).status_code == 403
+        assert recovered == [True]
+        assert worker_ran.wait(1)
 
 
 def test_discovery_failure_is_not_no_suppliers(monkeypatch):
@@ -190,7 +216,7 @@ def test_discovery_failure_is_not_no_suppliers(monkeypatch):
     async def fail(*_): raise TimeoutError('search timed out')
     monkeypatch.setattr(execution_app, 'search_businesses', fail)
     with SessionLocal() as db:
-        row=asyncio.run(execution_app.start_request_from_conversation(db,'عايز موتوسيكل، جديد، 70 ألف، مصر الجديدة، دورلي على ده'))
+        row=asyncio.run(execution_app.start_request_from_conversation(db,'عايز موتوسيكل، جديد، 70 ألف، مصر الجديدة، دورلي على ده',CUSTOMER,'ar-EG'))
         assert row.status=='DISCOVERY_UNAVAILABLE'
         assert row.budget==70000
         assert row.area=='مصر الجديدة'

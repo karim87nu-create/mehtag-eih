@@ -7,6 +7,26 @@
 <a href="/">← رجوع</a><h1>الخصوصية والموافقات</h1>
 <div class="card"><b>القاعدة الأساسية</b><p class="muted">البرنامج لا يفترض صلاحية قراءة كل شيء على الهاتف، ولا ينشئ متابعة خارجية تلقائيًا من مصدر متصل إلا حسب الصلاحيات التي وافق عليها المستخدم.</p></div>
 <div class="card"><b>الوضع الافتراضي</b><p class="muted">Suggest only: لو اكتشف تعاملًا له متابعة مفيدة، يقترح عليك «تابعها معايا؟» بدل ما يتصرف من نفسه.</p></div>
+<div class="card">
+  <b>المصادر المتصلة</b>
+  <p class="muted">كل مصدر منفصل، وتقدر توقفه في أي وقت. المشاركة اليدوية تسمح بالحدث اللي شاركته فقط.</p>
+  <form method="post" action="/consent">
+    <input type="hidden" name="source_type" value="NOTIFICATION">
+    {% if enabled_sources.get("NOTIFICATION") %}
+    <button class="btn" name="decision" value="revoke">إيقاف قراءة إشعارات التطبيق</button>
+    {% else %}
+    <button class="btn" name="decision" value="grant">السماح بإشعارات التطبيق</button>
+    {% endif %}
+  </form>
+  <form method="post" action="/consent" style="margin-top:10px">
+    <input type="hidden" name="source_type" value="EMAIL_CONNECTOR">
+    {% if enabled_sources.get("EMAIL_CONNECTOR") %}
+    <button class="btn" name="decision" value="revoke">إيقاف رسائل الحجوزات والمتابعة</button>
+    {% else %}
+    <button class="btn" name="decision" value="grant">السماح برسائل الحجوزات والمتابعة</button>
+    {% endif %}
+  </form>
+</div>
 <div class="card"><b>الذاكرة</b><p class="muted">الملاحظة المتكررة لا تتحول إلى قاعدة شخصية مؤكدة إلا بعد موافقتك. تعليماتك الحالية دائمًا لها الأولوية.</p></div>
 <div class="card"><b>السوق</b><p class="muted">بيانات العميل الحساسة لا يجب كشفها للمنفذ قبل الحاجة التشغيلية، ولا يتم بيع ترتيب النتائج لمن يدفع أكثر.</p></div>
 </main></body></html>

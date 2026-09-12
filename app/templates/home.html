@@ -91,6 +91,7 @@
   </section>
 </main>
 
+<script src="/static/execution.js" defer></script>
 <script>
 (function(){
   const thread=document.getElementById('chatThread');
@@ -103,15 +104,27 @@
   const hint=document.getElementById('composerHint');
   const THREAD_KEY='maak_conversation_thread_v1';
   const CUSTOMER_KEY='maak_customer_ref_v1';
+  const PENDING_TURN_KEY='maak_pending_chat_turn_v1';
+  const HAS_CUSTOMER={{ 'true' if customer_ref_present else 'false' }};
   const memoryStore={};
   function storedGet(key){try{return localStorage.getItem(key)}catch(_){return memoryStore[key]||null}}
   function storedSet(key,value){memoryStore[key]=value;try{localStorage.setItem(key,value)}catch(_){}}
   function storedRemove(key){delete memoryStore[key];try{localStorage.removeItem(key)}catch(_){}}
   let threadId=storedGet(THREAD_KEY);
   let customerRef=storedGet(CUSTOMER_KEY);
-  if(!customerRef){customerRef=(window.crypto&&crypto.randomUUID?crypto.randomUUID():`${Date.now()}-${Math.random()}`);storedSet(CUSTOMER_KEY,customerRef)}
   let historyReady=null;
   let busy=false;
+
+  function validCustomerRef(value){return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value||'')}
+  function newCustomerRef(){
+    if(window.crypto&&crypto.randomUUID)return crypto.randomUUID();
+    if(window.crypto&&crypto.getRandomValues){
+      const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
+      const h=[...bytes].map(b=>b.toString(16).padStart(2,'0')).join('');
+      return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
+    }
+    return null;
+  }
 
   function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
   function setDirection(node,text){
@@ -142,27 +155,55 @@
     if(!threadId)return;
     const requestedThread=threadId;
     try{
-      const r=await fetch(`/api/conversations/${encodeURIComponent(threadId)}?customer_ref=${encodeURIComponent(customerRef)}`,{cache:'no-store'});
+      const r=await fetch(`/api/conversations/${encodeURIComponent(threadId)}`,{cache:'no-store',credentials:'same-origin'});
       if(requestedThread!==threadId)return;
-      if(!r.ok){if(r.status===404||r.status===403){storedRemove(THREAD_KEY);threadId=null}return}
+      if(!r.ok){if(r.status===404){storedRemove(THREAD_KEY);threadId=null}return}
       const data=await r.json();data.messages.forEach(m=>addMessage(m.role,m.content,false));degraded.classList.toggle('hidden',!data.degraded);
     }catch(e){hint.textContent='المحادثة المحفوظة مش متاحة دلوقتي.'}
   }
+  async function initialize(){
+    if(!HAS_CUSTOMER){
+      if(!validCustomerRef(customerRef)){customerRef=newCustomerRef();if(customerRef)storedSet(CUSTOMER_KEY,customerRef)}
+      if(!customerRef){hint.textContent='المتصفح مش قادر ينشئ جلسة آمنة.';return false}
+      try{
+        const r=await fetch('/api/customer/session',{method:'POST',cache:'no-store',credentials:'same-origin',headers:{'X-Customer-Ref':customerRef,'Accept':'application/json'}});
+        if(!r.ok)throw new Error(`HTTP ${r.status}`);
+        storedRemove(CUSTOMER_KEY);customerRef=null;
+        location.replace(location.href);return false;
+      }catch(_){hint.textContent='تعذر بدء جلسة خاصة دلوقتي.';return false}
+    }
+    // Once the server has the protected HttpOnly cookie, do not leave the
+    // bearer capability readable in localStorage.
+    storedRemove(CUSTOMER_KEY);customerRef=null;
+    await loadHistory();
+    try{
+      const pending=JSON.parse(storedGet(PENDING_TURN_KEY)||'null');
+      if(pending&&validCustomerRef(pending.id)&&pending.text){input.value=pending.text;autoSize();hint.textContent='رسالتك محفوظة؛ ابعتها تاني لإكمال نفس المحاولة.'}
+    }catch(_){storedRemove(PENDING_TURN_KEY)}
+    return true;
+  }
   async function handle(text){
     text=(text||'').trim();if(!text||busy)return;
+    let pending=null;
+    try{pending=JSON.parse(storedGet(PENDING_TURN_KEY)||'null')}catch(_){storedRemove(PENDING_TURN_KEY)}
+    const samePending=pending&&validCustomerRef(pending.id)&&pending.text===text&&(!pending.thread_id||pending.thread_id===threadId);
+    const clientTurnId=samePending?pending.id:newCustomerRef();
+    if(!clientTurnId){hint.textContent='المتصفح مش قادر ينشئ رقم آمن للرسالة.';return}
+    storedSet(PENDING_TURN_KEY,JSON.stringify({id:clientTurnId,text:text,thread_id:threadId}));
     busy=true;send.disabled=true;mic.disabled=true;
-    if(historyReady)await historyReady;
+    if(historyReady&&await historyReady===false){busy=false;send.disabled=false;mic.disabled=false;return}
     addMessage('user',text);input.value='';autoSize();hint.textContent='لحظة…';const wait=thinking();
     const controller=new AbortController();
     const timeout=setTimeout(()=>controller.abort(),45000);
     const progress=setTimeout(()=>{hint.textContent='بفكر في رد مناسب…'},1800);
     const slower=setTimeout(()=>{hint.textContent='ثواني كمان…'},7000);
     try{
-      const r=await fetch('/api/chat',{method:'POST',cache:'no-store',signal:controller.signal,headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({message:text,thread_id:threadId,customer_ref:customerRef,locale:navigator.language||'ar-EG'})});
+      const r=await fetch('/api/chat',{method:'POST',cache:'no-store',credentials:'same-origin',signal:controller.signal,headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({message:text,thread_id:threadId,client_turn_id:clientTurnId,locale:navigator.language||'ar-EG'})});
       const isJson=(r.headers.get('content-type')||'').includes('application/json');
       const data=isJson?await r.json():null;wait.remove();if(!r.ok)throw new Error((data&&data.detail)||`HTTP ${r.status}`);
       if(!data.message||!data.message.content)throw new Error('empty response');
       threadId=data.thread_id;storedSet(THREAD_KEY,threadId);addMessage('assistant',data.message.content);addCard(data.card);
+      storedRemove(PENDING_TURN_KEY);
       degraded.classList.toggle('hidden',!data.provider.degraded);
       hint.textContent=data.action.status==='EXECUTED'?'المتابعة بدأت، والحالة قدامك.':'كمّل كلامك عادي.';
     }catch(e){
@@ -170,6 +211,7 @@
       const late=e&&e.name==='AbortError';
       addMessage('assistant',late?'الرد اتأخر ومش هخمن النتيجة. حدّث الصفحة قبل ما تكرر أي طلب تنفيذي.':'الاتصال اتقطع قبل ما أعرف النتيجة. حدّث الصفحة قبل ما تكرر أي طلب تنفيذي.');
       hint.textContent=late?'تقدر تكمّل برسالة عادية.':'راجع الاتصال وجرب تاني.';
+      input.value=text;autoSize();
     }
     finally{clearTimeout(timeout);clearTimeout(progress);clearTimeout(slower);busy=false;send.disabled=false;mic.disabled=false;input.focus()}
   }
@@ -189,7 +231,7 @@
       r.onend=()=>{active=false;mic.classList.remove('listening')};r.start();
     });
   }else mic.style.display='none';
-  historyReady=loadHistory();
+  historyReady=initialize();
 })();
 </script>
 </body></html>

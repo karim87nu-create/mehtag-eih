@@ -3,7 +3,7 @@
 .chat-top{margin-bottom:4px}
 .conversation-hero{padding:18px 0 4px;min-height:110px}
 .presence{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:13px;padding:0 5px 12px}
-.chat-thread{display:flex;flex-direction:column;gap:12px}
+.chat-thread{display:flex;flex-direction:column;gap:12px;min-width:0;width:100%}
 .chat-message{display:flex;align-items:flex-end;gap:9px;max-width:100%}
 .chat-message.user{justify-content:flex-start;padding-right:54px}
 .chat-message.assistant{justify-content:flex-end;padding-left:34px}
@@ -12,11 +12,11 @@
   display:grid;place-items:center;font-weight:800;box-shadow:0 9px 22px rgba(20,19,16,.14)
 }
 .chat-message .bubble{
-  max-width:min(560px,88%);padding:14px 16px;border-radius:22px;line-height:1.8;font-size:16px;
-  box-shadow:var(--shadow-sm);white-space:pre-wrap
+  min-width:0;max-width:min(560px,88%);padding:14px 16px;border-radius:22px;line-height:1.8;font-size:16px;
+  box-shadow:var(--shadow-sm);white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word
 }
 .chat-message.assistant .bubble{
-  background:rgba(255,255,255,.86);border:1px solid rgba(255,255,255,.94);border-bottom-right-radius:7px
+  max-width:min(560px,calc(100% - 45px));background:rgba(255,255,255,.86);border:1px solid rgba(255,255,255,.94);border-bottom-right-radius:7px
 }
 .chat-message.user .bubble{background:var(--ink);color:white;border-bottom-left-radius:7px}
 .welcome-message .bubble{font-size:17px;padding:17px 18px}
@@ -29,15 +29,15 @@
 .conversation-composer{
   position:sticky;bottom:12px;z-index:50;margin-top:18px;background:rgba(255,255,255,.86);
   border:1px solid rgba(255,255,255,.94);border-radius:27px;padding:9px 10px 8px;
-  box-shadow:0 22px 70px rgba(38,31,20,.16);backdrop-filter:blur(22px)
+  box-shadow:0 22px 70px rgba(38,31,20,.16);backdrop-filter:blur(22px);max-width:100%
 }
 .conversation-composer form{display:flex;align-items:flex-end;gap:9px}
 .conversation-composer textarea{
   flex:1;min-height:50px;max-height:128px;resize:none;border:0;outline:0;background:transparent;
-  padding:13px 11px;font-size:16px;line-height:1.65;color:var(--ink)
+  min-width:0;width:100%;padding:13px 11px;font-size:16px;line-height:1.65;color:var(--ink)
 }
 .conversation-composer textarea::placeholder{color:#97938a}
-.composer-controls{display:flex;align-items:center;gap:7px;padding-bottom:2px}
+.composer-controls{display:flex;align-items:center;gap:7px;padding-bottom:2px;flex:0 0 auto}
 .voice-button,.chat-send{
   width:46px;height:46px;border-radius:17px;border:0;display:grid;place-items:center;transition:.18s var(--ease)
 }
@@ -107,6 +107,7 @@
   .chat-message.user{padding-right:36px}
   .chat-message.assistant{padding-left:14px}
   .chat-message .bubble{max-width:92%;font-size:15.5px}
+  .chat-message.assistant .bubble{max-width:calc(100% - 43px)}
   .assistant-avatar{width:34px;height:34px;min-width:34px}
   .conversation-composer{bottom:8px}
 }

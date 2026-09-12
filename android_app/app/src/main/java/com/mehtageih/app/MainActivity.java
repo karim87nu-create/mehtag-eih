@@ -9,6 +9,9 @@ import android.widget.*;
 import android.webkit.*;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
 public class MainActivity extends Activity {
     WebView web;
@@ -17,6 +20,9 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
         prefs=getSharedPreferences("app",MODE_PRIVATE);
+        if(prefs.getString("customer_ref","").isEmpty()){
+            prefs.edit().putString("customer_ref",UUID.randomUUID().toString()).apply();
+        }
         String backend=prefs.getString("backend_url","");
         if(backend.isEmpty()) { showSetup(); return; }
         showWeb(backend);
@@ -46,16 +52,27 @@ public class MainActivity extends Activity {
         web.getSettings().setJavaScriptEnabled(true);
         web.getSettings().setDomStorageEnabled(true);
         web.setWebViewClient(new WebViewClient());
+        CookieManager cookies=CookieManager.getInstance();
+        cookies.setAcceptCookie(true);
+        if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.LOLLIPOP){
+            cookies.setAcceptThirdPartyCookies(web,false);
+        }
         setContentView(web);
         Intent intent=getIntent();
         if(Intent.ACTION_SEND.equals(intent.getAction()) && intent.getType()!=null && intent.getType().startsWith("text/")){
             String shared=intent.getStringExtra(Intent.EXTRA_TEXT);
             if(shared!=null){
                 String u=backend+"/share?text="+URLEncoder.encode(shared, StandardCharsets.UTF_8);
-                web.loadUrl(u); return;
+                loadAuthenticated(u); return;
             }
         }
-        web.loadUrl(backend+"/");
+        loadAuthenticated(backend+"/");
+    }
+
+    private void loadAuthenticated(String url){
+        Map<String,String> headers=new HashMap<>();
+        headers.put("X-Customer-Ref",prefs.getString("customer_ref",""));
+        web.loadUrl(url,headers);
     }
 
     @Override public void onBackPressed(){

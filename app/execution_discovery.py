@@ -8,6 +8,7 @@ import httpx
 from . import services
 from .db import SessionLocal
 from .execution_models import DiscoveryCache
+from .locale import LocaleContext, resolve_locale
 
 _lock = asyncio.Lock()
 _last_call = 0.0
@@ -40,11 +41,14 @@ def save(key, payload):
             db.add(DiscoveryCache(key=key, payload=json.dumps(payload, ensure_ascii=False)))
         db.commit()
 
-async def discover_businesses(text, area=None):
+async def discover_businesses(text, area=None, locale_context: LocaleContext | str | None = None):
     global _last_call
+    context = locale_context if isinstance(locale_context, LocaleContext) else resolve_locale(locale_context)
     category = category_for(text)
     query = ' '.join(text.split())
-    key = hashlib.sha256(json.dumps([category or query, area], ensure_ascii=False).encode()).hexdigest()
+    key = hashlib.sha256(json.dumps(
+        [category or query, area, context.locale, context.region], ensure_ascii=False
+    ).encode()).hexdigest()
     async with _lock:
         hit = cached(key)
         if hit is not None:
@@ -53,21 +57,28 @@ async def discover_businesses(text, area=None):
         await asyncio.sleep(max(0, 1.1 - (time.monotonic() - _last_call)))
         _last_call = time.monotonic()
         if not category or not area:
-            result = await services.discover_businesses(query, area)
+            result = await services.discover_businesses(query, area, context)
             if result:
                 save(key, result)
             return result
         if services.GOOGLE_KEY:
             try:
-                result = await services._google(services._query(query, area))
+                result = await services._google(services._query(query, area, context), context)
                 if result:
                     save(key, result); return result
             except (httpx.HTTPError, ValueError):
                 pass
         headers = {'User-Agent': 'Maak/1.0 (https://github.com/karim87nu-create/mehtag-eih)'}
         async with httpx.AsyncClient(timeout=12, headers=headers, follow_redirects=False) as client:
-            response = await client.get('https://nominatim.openstreetmap.org/search', params={
-                'q': f'{area}, مصر', 'format': 'jsonv2', 'limit': 1, 'countrycodes': 'eg'})
+            geocode_params = {
+                'q': ', '.join(value for value in (area, context.search_country) if value),
+                'format': 'jsonv2',
+                'limit': 1,
+                'accept-language': context.language if context.language != 'mixed' else 'ar',
+            }
+            if context.country_code:
+                geocode_params['countrycodes'] = context.country_code
+            response = await client.get('https://nominatim.openstreetmap.org/search', params=geocode_params)
             response.raise_for_status()
             locations = response.json()
             if not locations:
@@ -81,7 +92,9 @@ async def discover_businesses(text, area=None):
             result = []
             for element in response.json().get('elements', []):
                 tags = element.get('tags', {})
-                name = tags.get('name:ar') or tags.get('name')
+                localized_name = tags.get(f'name:{context.language}') if context.language != 'mixed' else None
+                language_fallback = tags.get('name:ar') if context.language == 'ar' else tags.get('name:en')
+                name = localized_name or tags.get('name') or language_fallback
                 if not name:
                     continue
                 kind, oid = element['type'], element['id']

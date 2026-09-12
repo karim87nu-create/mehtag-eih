@@ -1,11 +1,22 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text, Boolean
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text, Boolean, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from .db import Base
 
 class Request(Base):
     __tablename__ = "requests"
+    __table_args__ = (
+        UniqueConstraint("customer_ref", "source_turn_id", name="uq_requests_customer_source_turn"),
+    )
     id = Column(Integer, primary_key=True)
+    # Rows without an owner are legacy/quarantined and are never customer-visible.
+    customer_ref = Column(String(36), nullable=True, index=True)
+    locale = Column(String(20), nullable=True)
+    region = Column(String(16), nullable=True)
+    currency = Column(String(8), nullable=True)
+    # The chat turn that authorized this request.  NULL keeps legacy/non-chat
+    # entry points backwards compatible; a customer turn can create it once.
+    source_turn_id = Column(String(36), nullable=True)
     raw_text = Column(Text, nullable=False)
     item = Column(String, nullable=True)
     area = Column(String, nullable=True)
@@ -37,6 +48,9 @@ class MerchantLink(Base):
 
 class Offer(Base):
     __tablename__ = "offers"
+    __table_args__ = (
+        UniqueConstraint("request_id", "business_id", name="uq_offers_request_business"),
+    )
     id = Column(Integer, primary_key=True)
     request_id = Column(Integer, ForeignKey("requests.id"), nullable=False)
     business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False)
@@ -60,6 +74,7 @@ class Event(Base):
 class ExecutionCase(Base):
     __tablename__ = "execution_cases"
     id = Column(Integer, primary_key=True)
+    customer_ref = Column(String(36), nullable=True, index=True)
     request_id = Column(Integer, ForeignKey("requests.id"), nullable=False, unique=True)
     offer_id = Column(Integer, ForeignKey("offers.id"), nullable=False)
     status = Column(String, default="AWAITING_PAYMENT")
@@ -80,6 +95,10 @@ class CaseEvent(Base):
 class ExternalCase(Base):
     __tablename__ = "external_cases"
     id = Column(Integer, primary_key=True)
+    customer_ref = Column(String(36), nullable=True, index=True)
+    locale = Column(String(20), nullable=True)
+    region = Column(String(16), nullable=True)
+    currency = Column(String(8), nullable=True)
     source_text = Column(Text, nullable=False)
     title = Column(String, nullable=False)
     expected_at = Column(String, nullable=True)
@@ -90,6 +109,7 @@ class ExternalCase(Base):
 class MemoryFact(Base):
     __tablename__ = "memory_facts"
     id = Column(Integer, primary_key=True)
+    customer_ref = Column(String(36), nullable=True, index=True)
     memory_type = Column(String, nullable=False)  # customer / market
     key = Column(String, nullable=False)
     value = Column(Text, nullable=False)
@@ -102,6 +122,10 @@ class MemoryFact(Base):
 class DetectedTransaction(Base):
     __tablename__ = "detected_transactions"
     id = Column(Integer, primary_key=True)
+    customer_ref = Column(String(36), nullable=True, index=True)
+    locale = Column(String(20), nullable=True)
+    region = Column(String(16), nullable=True)
+    currency = Column(String(8), nullable=True)
     source = Column(String, nullable=False)  # email/share/api/device-later
     source_ref = Column(String, nullable=True)
     raw_text = Column(Text, nullable=False)
@@ -145,6 +169,7 @@ class FollowupTask(Base):
 class LearnedPreference(Base):
     __tablename__ = "learned_preferences"
     id = Column(Integer, primary_key=True)
+    customer_ref = Column(String(36), nullable=True, index=True)
     preference_key = Column(String, nullable=False)
     preference_value = Column(Text, nullable=False)
     evidence_count = Column(Integer, default=1)
@@ -188,6 +213,7 @@ class IssueRecord(Base):
 class CustomerRule(Base):
     __tablename__ = "customer_rules"
     id = Column(Integer, primary_key=True)
+    customer_ref = Column(String(36), nullable=True, index=True)
     rule_key = Column(String, nullable=False)
     rule_value = Column(Text, nullable=False)
     enabled = Column(Boolean, default=True)
@@ -252,7 +278,9 @@ class PaymentIntent(Base):
     execution_case_id = Column(Integer, ForeignKey("execution_cases.id"), nullable=False)
     amount = Column(Float, nullable=False)
     service_fee = Column(Float, nullable=False)
-    currency = Column(String, default="EGP")
+    # Callers set this from the owning request's locale. ``XXX`` is the neutral
+    # ISO fallback; a missing value must never silently become Egyptian pounds.
+    currency = Column(String(8), nullable=False, default="XXX")
     provider = Column(String, default="SIMULATION")
     provider_ref = Column(String, nullable=True)
     status = Column(String, default="CREATED")
@@ -283,6 +311,10 @@ class AuditRecord(Base):
 class MobileSourceEvent(Base):
     __tablename__ = "mobile_source_events"
     id = Column(Integer, primary_key=True)
+    customer_ref = Column(String(36), nullable=True, index=True)
+    locale = Column(String(20), nullable=True)
+    region = Column(String(16), nullable=True)
+    currency = Column(String(8), nullable=True)
     source = Column(String, nullable=False)   # SHARE / NOTIFICATION / EMAIL_CONNECTOR / MANUAL
     package_name = Column(String, nullable=True)
     title = Column(Text, nullable=True)
@@ -296,7 +328,7 @@ class ConversationThread(Base):
     """A durable customer conversation, independent from any single request/case."""
     __tablename__ = "conversation_threads"
     id = Column(String, primary_key=True)
-    customer_ref = Column(String, nullable=False, default="anonymous", index=True)
+    customer_ref = Column(String(36), nullable=False, index=True)
     locale = Column(String, nullable=False, default="ar-EG")
     language = Column(String, nullable=False, default="ar")
     currency = Column(String, nullable=False, default="EGP")
@@ -318,6 +350,28 @@ class ConversationMessage(Base):
     style_metadata = Column(Text, nullable=True)  # JSON: language, tone, mood, urgency, formality
     provider_metadata = Column(Text, nullable=True)  # JSON: model/provider/degraded
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ConversationTurn(Base):
+    """Idempotency/lease record for one client-submitted chat turn."""
+    __tablename__ = "conversation_turns"
+    __table_args__ = (
+        UniqueConstraint("customer_ref", "client_turn_id", name="uq_conversation_turn_customer_client"),
+        UniqueConstraint("thread_id", "client_turn_id", name="uq_conversation_turn_thread_client"),
+    )
+    id = Column(Integer, primary_key=True)
+    thread_id = Column(String, ForeignKey("conversation_threads.id"), nullable=False, index=True)
+    customer_ref = Column(String(36), nullable=False, index=True)
+    client_turn_id = Column(String(36), nullable=False)
+    request_fingerprint = Column(String(64), nullable=False)
+    status = Column(String, nullable=False, default="PROCESSING")  # PROCESSING/COMPLETED/FAILED
+    lease_token = Column(String(36), nullable=False)
+    attempt_count = Column(Integer, nullable=False, default=1)
+    user_message_id = Column(Integer, ForeignKey("conversation_messages.id"), nullable=True)
+    response_envelope = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
 
 
 class ConversationCaseLink(Base):

@@ -1,6 +1,7 @@
 import os, re, secrets, httpx
 from urllib.parse import urlencode
 from dotenv import load_dotenv
+from .locale import LocaleContext, resolve_locale
 
 load_dotenv()
 
@@ -42,15 +43,22 @@ def understand_request(text: str):
 
     return result
 
-def _query(text, area=None):
+def _locale_context(value: LocaleContext | str | None) -> LocaleContext:
+    return value if isinstance(value, LocaleContext) else resolve_locale(value)
+
+
+def _query(text, area=None, locale_context: LocaleContext | str | None = None):
+    context = _locale_context(locale_context)
     q = " ".join((text or "").split())
     if area and area not in q:
         q += f" {area}"
-    if "مصر" not in q:
-        q += " مصر"
+    country = context.search_country.strip()
+    if country and country.casefold() not in q.casefold():
+        q += f" {country}"
     return q[:220]
 
-async def _google(q):
+async def _google(q, locale_context: LocaleContext | str | None = None):
+    context = _locale_context(locale_context)
     url = "https://places.googleapis.com/v1/places:searchText"
     headers = {
         "Content-Type": "application/json",
@@ -59,7 +67,9 @@ async def _google(q):
         "places.id,places.displayName,places.websiteUri,"
         "places.nationalPhoneNumber,places.formattedAddress"
     }
-    payload = {"textQuery": q, "languageCode": "ar", "maxResultCount": 10}
+    payload = {"textQuery": q, "languageCode": context.language if context.language != "mixed" else "ar", "maxResultCount": 10}
+    if context.country_code:
+        payload["regionCode"] = context.country_code.upper()
 
     async with httpx.AsyncClient(timeout=20) as client:
         r = await client.post(url, headers=headers, json=payload)
@@ -78,16 +88,18 @@ async def _google(q):
         })
     return out
 
-async def _osm(q):
+async def _osm(q, locale_context: LocaleContext | str | None = None):
+    context = _locale_context(locale_context)
     params = {
         "q": q,
         "format": "jsonv2",
         "extratags": 1,
         "namedetails": 1,
         "limit": 10,
-        "countrycodes": "eg",
-        "accept-language": "ar"
+        "accept-language": context.language if context.language != "mixed" else "ar",
     }
+    if context.country_code:
+        params["countrycodes"] = context.country_code
 
     url = "https://nominatim.openstreetmap.org/search?" + urlencode(params)
 
@@ -104,9 +116,12 @@ async def _osm(q):
         extra = x.get("extratags") or {}
         names = x.get("namedetails") or {}
 
+        localized_name = names.get(f"name:{context.language}") if context.language != "mixed" else None
+        language_fallback = names.get("name:ar") if context.language == "ar" else names.get("name:en")
         name = (
-            names.get("name:ar")
+            localized_name
             or names.get("name")
+            or language_fallback
             or (x.get("display_name") or "").split(",")[0]
         )
 
@@ -128,19 +143,20 @@ async def _osm(q):
 
     return out
 
-async def discover_businesses(query: str, area=None):
-    q = _query(query, area)
+async def discover_businesses(query: str, area=None, locale_context: LocaleContext | str | None = None):
+    context = _locale_context(locale_context)
+    q = _query(query, area, context)
 
     if GOOGLE_KEY:
         try:
-            found = await _google(q)
+            found = await _google(q, context)
             if found:
                 return found
         except Exception:
             pass
 
     try:
-        return await _osm(q)
+        return await _osm(q, context)
     except Exception:
         return []
 

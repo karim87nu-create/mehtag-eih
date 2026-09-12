@@ -29,7 +29,7 @@
       <div class="offer-top">
         <div class="offer-eyebrow"><span class="live-dot"></span><span>جاهز للتأكيد</span></div>
         <h1>راجع واختار</h1>
-        <div class="price">{{ "%.0f"|format(offer.price) }} <small>جنيه</small></div>
+        <div class="price">{{ "%.0f"|format(offer.price) }} <small>{{ req.currency or "XXX" }}</small></div>
         <div class="offer-grid">
           <div class="metric"><span>موعد التنفيذ</span><b>{{ offer.eta }}</b></div>
           <div class="metric"><span>حالة المتابعة</span><b>هتفضل مفتوحة لحد تأكيد النتيجة</b></div>

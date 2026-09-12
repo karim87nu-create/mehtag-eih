@@ -31,7 +31,7 @@
       <div class="offer-top">
         <div class="offer-eyebrow"><span class="live-dot"></span><span>عرض فعلي جاهز لقرارك</span></div>
         <h1>لقيتلك الأنسب</h1>
-        <div class="price">{{ "%.0f"|format(best.price) }} <small>جنيه</small></div>
+        <div class="price">{{ "%.0f"|format(best.price) }} <small>{{ req.currency or "XXX" }}</small></div>
 
         <div class="offer-grid">
           <div class="metric"><span>موعد التنفيذ</span><b>{{ best.eta }}</b></div>
@@ -49,9 +49,9 @@
       </div>
 
       <div class="fee-box">
-        <div class="fee-row"><span>التنفيذ</span><span>{{ "%.0f"|format(best.price) }} ج</span></div>
-        <div class="fee-row"><span>خدمة المتابعة والتنفيذ</span><span>{{ "%.0f"|format(service_fee) }} ج</span></div>
-        <div class="fee-row total"><span>الإجمالي</span><span>{{ "%.0f"|format(best.price + service_fee) }} ج</span></div>
+        <div class="fee-row"><span>التنفيذ</span><span>{{ "%.0f"|format(best.price) }} {{ req.currency or "XXX" }}</span></div>
+        <div class="fee-row"><span>خدمة المتابعة والتنفيذ</span><span>{{ "%.0f"|format(service_fee) }} {{ req.currency or "XXX" }}</span></div>
+        <div class="fee-row total"><span>الإجمالي</span><span>{{ "%.0f"|format(best.price + service_fee) }} {{ req.currency or "XXX" }}</span></div>
       </div>
 
       <div class="offer-action">

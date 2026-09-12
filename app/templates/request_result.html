@@ -65,7 +65,7 @@
   if(transcript&&Array.isArray(transcript.messages)) transcript.messages.forEach(m=>add(m.role,m.text));
   else{
     add('user',`{{ row.raw_text|e }}`);
-    add('assistant','تمام، فهمت طلبك. هبدأ أشتغل عليه خطوة بخطوة.');
+    add('assistant','الطلب اتسجل. براجع دلوقتي الجهات المناسبة وإمكانية التواصل الفعلي معاها.');
   }
 
   const reduced=window.matchMedia('(prefers-reduced-motion: reduce)').matches;

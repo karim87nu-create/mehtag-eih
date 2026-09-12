@@ -21,9 +21,9 @@
   --ease:cubic-bezier(.2,.78,.2,1);
 }
 *{box-sizing:border-box}
-html{font-family:Inter,system-ui,-apple-system,"Segoe UI",Tahoma,Arial,sans-serif;background:var(--bg);color:var(--ink);scroll-behavior:smooth}
+html{font-family:Inter,system-ui,-apple-system,"Segoe UI",Tahoma,Arial,sans-serif;background:var(--bg);color:var(--ink);scroll-behavior:smooth;overflow-x:hidden}
 body{
-  margin:0;min-height:100vh;
+  margin:0;min-height:100vh;overflow-x:hidden;
   background:
     radial-gradient(900px 560px at 105% -10%,rgba(255,255,255,.98),transparent 56%),
     radial-gradient(700px 520px at -10% 18%,rgba(224,215,199,.72),transparent 58%),
