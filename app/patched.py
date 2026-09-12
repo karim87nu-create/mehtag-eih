@@ -28,6 +28,11 @@ _CONTROL_EXECUTE = {
     "نفذ", "نفّذ", "دورلي", "دور", "كمل وابدأ", "ابدأ التنفيذ", "ابدا التنفيذ",
     "start", "go", "go ahead", "proceed", "search now",
 }
+_CONTROL_CANCEL = {
+    "بلاش", "خلاص بلاش", "الغيه", "الغي", "إلغي", "متبدأش", "ما تبدأش",
+    "متنفذش", "ما تنفذش", "مش عايز", "خلاص مش عايز", "cancel", "never mind",
+    "nevermind", "stop", "don't start", "do not start",
+}
 _SMALL_TALK = {
     "شكرا", "شكرًا", "متشكر", "تسلم", "تمام شكرا", "thanks", "thank you",
     "اهلا", "أهلا", "هاي", "hello", "hi", "باي", "bye",
@@ -58,6 +63,11 @@ def _is_execute_control(text: str) -> bool:
     return value in {_norm(item) for item in _CONTROL_EXECUTE}
 
 
+def _is_cancel_control(text: str) -> bool:
+    value = _norm(text)
+    return value in {_norm(item) for item in _CONTROL_CANCEL}
+
+
 def _is_small_talk(text: str) -> bool:
     return _norm(text) in {_norm(item) for item in _SMALL_TALK}
 
@@ -77,11 +87,12 @@ def _draft_segment(context) -> list[str]:
     turns = _user_turns(context)
     current_index = len(turns) - 1
 
-    # A previous explicit execute command closes the older draft.  This prevents
-    # details from an already-created request leaking into a later one.
+    # A previous explicit execute/cancel command closes the older draft.  This
+    # prevents details from an already-created or abandoned request leaking into
+    # a later one.
     start_window = 0
     for index, turn in enumerate(turns[:-1]):
-        if _is_execute_control(turn):
+        if _is_execute_control(turn) or _is_cancel_control(turn):
             start_window = index + 1
 
     seed_index = None
@@ -93,7 +104,7 @@ def _draft_segment(context) -> list[str]:
 
     segment = []
     for turn in turns[seed_index:current_index + 1]:
-        if _is_execute_control(turn) or _is_small_talk(turn):
+        if _is_execute_control(turn) or _is_cancel_control(turn) or _is_small_talk(turn):
             continue
         segment.append(turn)
     return segment
@@ -130,7 +141,7 @@ def _is_draft_detail(context) -> bool:
     current = _clean(context.message)
     if _is_request_seed(current):
         return True
-    if _is_small_talk(current) or _is_execute_control(current):
+    if _is_small_talk(current) or _is_execute_control(current) or _is_cancel_control(current):
         return False
     # Request details are normally short: condition, budget, area, colour, size,
     # etc.  Long/question turns remain model-owned.
@@ -171,6 +182,20 @@ def _draft_aware_policy(reply, context):
     safe = _original_policy(reply, context)
     draft = _draft_text(context)
     current = _clean(context.message)
+
+    # Cancelling a pending draft is a hard boundary.  It never creates a case,
+    # and a later bare "ابدأ" cannot resurrect the abandoned request.
+    if draft and _is_cancel_control(current):
+        return ProviderReply(
+            "تمام، لغيت الطلب قبل التنفيذ. لو عايز تبدأ طلب جديد قولي من الأول.",
+            Intent.CONTINUATION,
+            1.0,
+            safe.style,
+            ActionProposal(ActionType.NONE, False, 1.0),
+            provider=_provider.name,
+            model=getattr(safe, "model", None),
+            degraded=_provider.degraded,
+        )
 
     # A bare explicit start command executes the accumulated draft, not the
     # single word "ابدأ" and not merely the immediately preceding fragment.
