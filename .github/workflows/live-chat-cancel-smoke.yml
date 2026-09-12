@@ -12,16 +12,24 @@ jobs:
       - name: Verify draft boundaries
         run: |
           python3 - <<'PY'
-          import json, uuid, urllib.request
+          import json, uuid, urllib.request, urllib.error
           base='https://mehtag-eih-experience-production.up.railway.app'
           customer=str(uuid.uuid4())
           thread=None
-          def post(text):
+          def post(text, turn_id=None, expect=None):
               global thread
-              body={'message':text,'locale':'ar-EG','client_turn_id':str(uuid.uuid4()),'customer_ref':customer}
+              body={'message':text,'locale':'ar-EG','client_turn_id':turn_id or str(uuid.uuid4()),'customer_ref':customer}
               if thread: body['thread_id']=thread
               req=urllib.request.Request(base+'/api/chat',data=json.dumps(body,ensure_ascii=False).encode(),headers={'Content-Type':'application/json','X-Customer-Ref':customer},method='POST')
-              with urllib.request.urlopen(req,timeout=90) as r: data=json.loads(r.read().decode())
+              try:
+                  with urllib.request.urlopen(req,timeout=90) as r: data=json.loads(r.read().decode())
+              except urllib.error.HTTPError as e:
+                  if expect and e.code==expect:
+                      print('EXPECTED_HTTP', e.code, text)
+                      return {'http':e.code}
+                  raise
+              if expect:
+                  raise AssertionError(f'expected HTTP {expect}, got success: {data}')
               thread=thread or data['thread_id']
               print(text, json.dumps(data,ensure_ascii=False))
               return data
@@ -47,5 +55,25 @@ jobs:
           second_title=((second.get('card') or {}).get('title') or '')
           assert second['action']['status']=='EXECUTED', second
           assert 'لابتوب' in second_title and '30' in second_title and 'موبايل' not in second_title, second_title
+
+          # A conversational question during a new draft may be answered, but it
+          # must not become part of the executable request text.
+          qseed=post('عايز عربية')
+          assert qseed.get('card') is None, qseed
+          question=post('ايه الفرق بين الجديد والمستعمل؟')
+          assert question['action']['status']!='EXECUTED', question
+          post('جديد')
+          third=post('ابدأ')
+          third_title=((third.get('card') or {}).get('title') or '')
+          assert third['action']['status']=='EXECUTED', third
+          assert 'عربية' in third_title and 'جديد' in third_title, third_title
+          assert 'الفرق' not in third_title and '؟' not in third_title, third_title
+
+          # A network retry may reuse a turn id only for the exact same content.
+          retry_id=str(uuid.uuid4())
+          post('مساء الخير', retry_id)
+          conflict=post('نص مختلف', retry_id, expect=409)
+          assert conflict['http']==409
+
           print('BOUNDARY_SMOKE_PASS=1')
           PY
