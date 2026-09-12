@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - '.github/workflows/live-chat-smoke.yml'
+      - 'app/patched.py'
   workflow_dispatch:
 
 jobs:
@@ -16,9 +17,27 @@ jobs:
           BASE_URL: https://mehtag-eih-experience-production.up.railway.app
         run: |
           python3 - <<'PY'
-          import json, os, sys, uuid, urllib.request, urllib.error
+          import json, os, time, uuid, urllib.request, urllib.error
 
           base = os.environ['BASE_URL'].rstrip('/')
+
+          # The Railway deployment is asynchronous.  Do not accidentally test
+          # the previous image: wait until the patched provider is actually live.
+          deadline = time.time() + 240
+          while True:
+              try:
+                  with urllib.request.urlopen(base + '/health', timeout=15) as r:
+                      health = json.loads(r.read().decode('utf-8'))
+                  provider = ((health.get('conversation') or {}).get('provider') or '')
+                  print('HEALTH_PROVIDER=' + provider)
+                  if provider.startswith('draft-aware('):
+                      break
+              except Exception as exc:
+                  print('WAIT_HEALTH=' + repr(exc))
+              if time.time() >= deadline:
+                  raise AssertionError('patched deployment did not become live in time')
+              time.sleep(10)
+
           customer = str(uuid.uuid4())
           thread = None
           results = []
@@ -43,8 +62,7 @@ jobs:
               )
               try:
                   with urllib.request.urlopen(req, timeout=90) as r:
-                      raw = r.read().decode('utf-8')
-                      return r.status, json.loads(raw)
+                      return r.status, json.loads(r.read().decode('utf-8'))
               except urllib.error.HTTPError as e:
                   raw = e.read().decode('utf-8', errors='replace')
                   print('HTTP_ERROR', e.code, message, raw)
@@ -76,13 +94,28 @@ jobs:
               if idx == 5:
                   turn5_envelope = data
 
-          # Exact replay of turn 5 must be byte-equivalent semantically and must not create a second action/case.
+          # Turns 1-4 are one draft, not independent actions.
+          for result in results[:4]:
+              assert (result.get('action') or {}).get('status') != 'EXECUTED', result
+          assert results[1]['intent'] == 'CONTINUATION', results[1]
+          assert results[2]['intent'] == 'CONTINUATION', results[2]
+          assert results[3]['intent'] == 'CONTINUATION', results[3]
+          assert '70' in (results[2].get('assistant') or ''), results[2]
+          assert 'مصر الجديدة' in (results[3].get('assistant') or ''), results[3]
+
+          # Explicit start creates exactly the accumulated request.
+          assert (results[4].get('action') or {}).get('status') == 'EXECUTED', results[4]
+          title = ((results[4].get('card') or {}).get('title') or '')
+          assert 'موتوسيكل' in title, title
+          assert '70' in title, title
+          assert 'مصر الجديدة' in title, title
+
+          # Exact replay of turn 5 must return the cached envelope and no duplicate.
           retry_status, retry = call('ابدأ', ids[4], thread)
           print('TURN5_RETRY=' + json.dumps(retry, ensure_ascii=False))
           assert retry_status == 200
           assert retry == turn5_envelope, 'Turn 5 retry did not return the exact cached envelope'
 
-          # Fetch persisted conversation/case links visible through the production API.
           req = urllib.request.Request(
               base + '/api/conversations/' + thread,
               headers={'X-Customer-Ref': customer},
@@ -98,12 +131,9 @@ jobs:
           print('TEST_THREAD=' + thread)
           print('REQUEST_CASE_COUNT=' + str(len(request_cases)))
 
-          # Small talk must not execute an action or add a new linked request.
-          last = results[-1]
-          assert (last.get('action') or {}).get('status') != 'EXECUTED', 'شكرا executed a business action'
-
-          # Critical invariant requested for the draft flow: one accumulated request/case only.
           assert len(request_cases) == 1, f'Expected exactly 1 REQUEST case, got {len(request_cases)}: {request_cases}'
+          assert (results[-1].get('action') or {}).get('status') != 'EXECUTED', results[-1]
+          assert 'متابع الطلب' in (results[-1].get('assistant') or ''), results[-1]
 
           print('SMOKE_PASS=1')
           PY
