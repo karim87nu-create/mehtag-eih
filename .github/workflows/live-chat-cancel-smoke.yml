@@ -11,6 +11,7 @@ jobs:
     steps:
       - name: Verify cancelling a draft does not execute it
         run: |
+          # Production regression check for an abandoned request draft.
           python3 - <<'PY'
           import json, uuid, urllib.request
           base='https://mehtag-eih-experience-production.up.railway.app'
