@@ -92,6 +92,7 @@
 </main>
 
 <script src="/static/execution.js" defer></script>
+<script src="/static/media.js" defer></script>
 <script>
 (function(){
   const conversation=document.getElementById('conversation');
@@ -176,8 +177,6 @@
         location.replace(location.href);return false;
       }catch(_){hint.textContent='تعذر بدء جلسة خاصة دلوقتي.';return false}
     }
-    // Once the server has the protected HttpOnly cookie, do not leave the
-    // bearer capability readable in localStorage.
     storedRemove(CUSTOMER_KEY);customerRef=null;
     await loadHistory();
     try{
