@@ -1,4 +1,4 @@
-name: Draft cancellation smoke
+name: Draft boundary smoke
 on:
   push:
     paths:
@@ -9,9 +9,8 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - name: Verify cancelling a draft does not execute it
+      - name: Verify draft boundaries
         run: |
-          # Production regression check for an abandoned request draft.
           python3 - <<'PY'
           import json, uuid, urllib.request
           base='https://mehtag-eih-experience-production.up.railway.app'
@@ -26,10 +25,25 @@ jobs:
               thread=thread or data['thread_id']
               print(text, json.dumps(data,ensure_ascii=False))
               return data
+
           post('عايز لابتوب')
           cancelled=post('خلاص بلاش')
           assert cancelled['action']['status']!='EXECUTED'
           after=post('ابدأ')
           assert after['action']['status']!='EXECUTED', after
-          print('CANCEL_SMOKE_PASS=1')
+
+          post('عايز موبايل')
+          post('20 ألف')
+          first=post('ابدأ')
+          first_title=((first.get('card') or {}).get('title') or '')
+          assert first['action']['status']=='EXECUTED', first
+          assert 'موبايل' in first_title and '20' in first_title and 'لابتوب' not in first_title, first_title
+
+          post('عايز لابتوب')
+          post('30 ألف')
+          second=post('ابدأ')
+          second_title=((second.get('card') or {}).get('title') or '')
+          assert second['action']['status']=='EXECUTED', second
+          assert 'لابتوب' in second_title and '30' in second_title and 'موبايل' not in second_title, second_title
+          print('BOUNDARY_SMOKE_PASS=1')
           PY
