@@ -1,0 +1,54 @@
+name: Live discovery smoke
+
+on:
+  push:
+    paths:
+      - '.github/workflows/live-discovery-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  discovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Inspect real production discovery
+        run: |
+          python3 - <<'PY'
+          import json, uuid, urllib.request
+          base='https://mehtag-eih-experience-production.up.railway.app'
+
+          def scenario(seed, area='مصر الجديدة'):
+              customer=str(uuid.uuid4())
+              thread=None
+              def post(text):
+                  nonlocal thread
+                  body={'message':text,'locale':'ar-EG','client_turn_id':str(uuid.uuid4()),'customer_ref':customer}
+                  if thread: body['thread_id']=thread
+                  req=urllib.request.Request(base+'/api/chat', data=json.dumps(body,ensure_ascii=False).encode(),
+                      headers={'Content-Type':'application/json','X-Customer-Ref':customer}, method='POST')
+                  with urllib.request.urlopen(req,timeout=90) as r:
+                      data=json.loads(r.read().decode())
+                  thread=thread or data['thread_id']
+                  return data
+              post(seed)
+              post(area)
+              started=post('ابدأ')
+              req=urllib.request.Request(base+'/api/execution/conversations/'+thread,
+                  headers={'X-Customer-Ref':customer}, method='GET')
+              with urllib.request.urlopen(req,timeout=60) as r:
+                  execution=json.loads(r.read().decode())
+              print('SCENARIO='+seed)
+              print('START='+json.dumps(started,ensure_ascii=False))
+              print('EXECUTION='+json.dumps(execution,ensure_ascii=False))
+              requests=execution.get('requests') or []
+              leads=(requests[0].get('leads') or []) if requests else []
+              return started, leads
+
+          pharmacy, pharmacy_leads=scenario('عايز صيدلية')
+          motorcycle, motorcycle_leads=scenario('عايز موتوسيكل')
+          print('PHARMACY_LEADS='+str(len(pharmacy_leads)))
+          print('MOTORCYCLE_LEADS='+str(len(motorcycle_leads)))
+          assert (pharmacy.get('action') or {}).get('status')=='EXECUTED', pharmacy
+          assert (motorcycle.get('action') or {}).get('status')=='EXECUTED', motorcycle
+          print('DISCOVERY_SMOKE_DONE=1')
+          PY
