@@ -573,7 +573,7 @@ def _asks_for_context_repair(text: str) -> bool:
     words = _tokens(text)
     arabic_understanding = any("فهم" in word for word in words)
     english_understanding = bool(words & {"understand", "context", "follow"})
-    expectation = bool(words & {"مفروض", "لازم", "should", "supposed"})
+    expectation = bool(words & {"مفروض", "المفروض", "لازم", "should", "supposed", "expected"})
     return expectation and (arabic_understanding or english_understanding)
 
 
@@ -854,6 +854,20 @@ def _safe_structured_fallback(signals: ConversationSignals, style: ResponseStyle
             "What exactly should I look for? Name the item or service; I won't start a request without it.",
             "أدورلك على إيه بالضبط—item ولا service؟ مش هبدأ request من غيرها.",
         )
+    if style.mood == "upset":
+        return _localized_pre_action(
+            style,
+            "واضح إن الحمل جاي من كذا ناحية. اختار حاجة واحدة بس لازم تخلص النهارده، وابدأ فيها بعشر دقايق؛ سيب الباقي مؤقتًا.",
+            "It sounds like several things are piling up. Pick the one thing that must move today and give it ten minutes; park the rest for now.",
+            "واضح إن كذا حاجة متراكمة. اختار one thing لازم يتحرك النهارده وادّيه عشر دقايق؛ park الباقي مؤقتًا.",
+        )
+    if signals.answer_mode == AnswerMode.ADVICE:
+        return _localized_pre_action(
+            style,
+            "ابدأ بأصغر خطوة تقدر تخلصها في عشر دقايق، وبعدها قرر الخطوة اللي بعدها على أساس اللي حصل فعلًا.",
+            "Start with the smallest step you can finish in ten minutes, then choose the next step based on what actually happened.",
+            "ابدأ بأصغر step تخلص في عشر دقايق، وبعدها اختار الـnext step على أساس النتيجة الفعلية.",
+        )
     return None
 
 
@@ -899,22 +913,41 @@ def _generated_reply_is_usable(text: str, context: TurnContext, baseline: Provid
     )
     if any(phrase in normalized for phrase in low_quality):
         return False
+    generic_non_answers = (
+        "كيف يمكنني ان اساعدك", "ماذا يمكنني ان اساعدك", "ماذا يمكنني ان اقدم لك",
+        "انا هنا لمساعدتك", "احكي براحتك", "قول اللي في بالك", "كمّل انا متابع",
+        "كمل انا متابع", "how can i help", "what can i help", "what would you like",
+        "i am here to help", "tell me what is on your mind", "go on im following",
+    )
+    if any(phrase in normalized for phrase in generic_non_answers):
+        return False
     refusal_patterns = (
         r"(?:لا\s+(?:استطيع|اقدر|يمكنني)|عذرا).{0,45}(?:فهم|مساعد|اجاب|انشا|تنفيذ|القيام)",
         r"(?:i\s+(?:cannot|can't|am unable)|sorry).{0,55}(?:understand|help|answer|create|do that)",
     )
     if any(re.search(pattern, normalized) for pattern in refusal_patterns):
         return False
-    if _social_kind(context.message) == "joke" and any(
-        phrase in normalized for phrase in ("لا استطيع", "لا يمكنني", "can't", "cannot")
-    ):
-        return False
+    social = _social_kind(context.message)
+    if social == "joke":
+        if any(phrase in normalized for phrase in ("لا استطيع", "لا يمكنني", "can't", "cannot")):
+            return False
+        joke_shape = (
+            "مرة", "واحد", "ليه", "قال", "why", "because", "walked", "told",
+            "😄", "😂", "🤣",
+        )
+        if len(normalized) < 24 or not any(marker in normalized for marker in joke_shape):
+            return False
     previous = {
         _normalize(str(item.get("content", ""))).strip(" .!؟?")
         for item in context.history
         if item.get("role") == "assistant"
     }
     if normalized in previous:
+        return False
+    if any(
+        len(old) >= 12 and (old in normalized or (len(normalized) >= 12 and normalized in old))
+        for old in previous
+    ):
         return False
     current = _normalize(context.message).strip(" .!؟?")
     if min(len(current), len(normalized)) >= 10:
@@ -1145,6 +1178,8 @@ class FallbackProvider(ConversationProvider):
             return Intent.EXTERNAL_EVENT_FOLLOWUP
         if has_case and tokens & {"كمل", "كمّل", "وصل", "حصل", "فين", "continue", "status", "update"}:
             return Intent.CONTINUATION
+        if social == "upset" and not _direct_action_request(text):
+            return Intent.SMALL_TALK
         if tokens & ({"عايز", "عاوز", "محتاج", "need", "want"} | _REQUEST_COMMANDS):
             return Intent.NEW_REQUEST
         if social:
@@ -1349,7 +1384,26 @@ def _local_system_prompt(
     normalized = _normalize(context.message)
     english = style.language == "en"
     signals = _conversation_signals(context, baseline.intent)
-    if signals.context_repair:
+    social = _social_kind(context.message)
+    if social == "joke":
+        task = (
+            "Tell one complete, short joke with a setup and punchline. No introduction, explanation, recycled answer, or unrelated advice."
+            if english else
+            "قول نكتة مصرية قصيرة وكاملة فيها تمهيد وقفلة. من غير مقدمة أو شرح أو إعادة كلام قديم أو نصيحة ملهاش علاقة."
+        )
+    elif social == "greeting":
+        task = (
+            "Return the greeting briefly and naturally. Do not ask a generic customer-service question."
+            if english else
+            "رد على التحية باختصار وبشكل طبيعي. ممنوع تسأل سؤال خدمة عام."
+        )
+    elif social == "how_are_you":
+        task = (
+            "Answer naturally and briefly, matching the user's casual tone."
+            if english else
+            "رد طبيعي وباختصار وبنفس خفة أسلوب المستخدم."
+        )
+    elif signals.context_repair:
         task = (
             "Repair the misunderstanding by using the immediately previous user message. Refer to its actual meaning or likely correction; never answer with a generic invitation to continue."
             if english else
@@ -1397,11 +1451,11 @@ def _local_system_prompt(
         )
 
     guardrail = (
-        "Never start with: Got it, Okay, I understand. Do not mention internal labels or JSON. "
-        "Never claim a booking, purchase, payment, supplier contact, or offer that did not happen."
+        "Answer the latest message itself. Never echo it, repeat an earlier answer, ask 'how can I help', "
+        "or start with 'Got it', 'Okay', or 'I understand'. Never claim an action that did not happen."
         if english else
-        "ممنوع تبدأ بـ: تمام فهمتك، أنا هنا احكي براحتك، حسنا. لا تذكر تصنيفات داخلية ولا JSON. "
-        "لا تدّعي حجزًا أو شراءً أو دفعًا أو تواصلًا لم يحدث."
+        "جاوب آخر رسالة نفسها. ممنوع تكرر كلام المستخدم أو رد قديم، أو تسأل «كيف أساعدك»، "
+        "أو تبدأ بـ«تمام فهمتك» أو «أنا هنا لمساعدتك». لا تدّعي تنفيذ حاجة ماحصلتش."
     )
     code_switch_note = ""
     if style.language == "mixed":
@@ -1415,33 +1469,7 @@ def _local_system_prompt(
             )
         else:
             code_switch_note = "\nافهم الكلمات الإنجليزية من سياق الجملة العربية، ولا تترجمها حرفيًا لمعنى بعيد."
-    structured_context = {
-        "intent": baseline.intent.value,
-        "answer_mode": signals.answer_mode.value,
-        "style": asdict(style),
-        "previous_user": signals.previous_user,
-        "likely_correction": signals.likely_correction,
-        "missing_request_fields": ["target"] if signals.request_target_missing else [],
-        "resolved_request_text": signals.resolved_request_text,
-        "action_proposal": {
-            "type": baseline.action.type.value,
-            "authorized": baseline.action.authorized,
-        },
-        "action_forbidden": signals.action_forbidden,
-        "capability_question": signals.capability_question,
-        "linked_case_facts": [
-            {
-                "id": case.get("id"), "type": case.get("type"),
-                "status": case.get("status"), "title": case.get("title"),
-            }
-            for case in context.active_cases[:5]
-        ],
-    }
-    return (
-        f"{identity}\n/no_think\n{task}\n{guardrail}{code_switch_note}\n"
-        "Use the following server context as facts and constraints, not as text to repeat:\n"
-        + json.dumps(structured_context, ensure_ascii=False)
-    )
+    return f"{identity}\n{task}\n{guardrail}{code_switch_note}"
 
 
 def _remove_canned_opening(text: str) -> str:
@@ -1472,10 +1500,10 @@ def _strip_model_artifacts(text: str) -> str:
 def _bounded_history(
     history: list[dict[str, str]],
     *,
-    max_messages: int = 6,
-    max_characters: int = 1050,
+    max_messages: int = 4,
+    max_characters: int = 650,
 ) -> list[dict[str, str]]:
-    """Keep the newest useful dialogue within both turn and character budgets."""
+    """Keep recent customer context without feeding failed model replies back in."""
     selected: list[dict[str, str]] = []
     remaining = max(320, max_characters)
     for item in reversed(history):
@@ -1483,11 +1511,11 @@ def _bounded_history(
             break
         role = item.get("role", "user")
         raw = str(item.get("content", "")).strip()
-        if role not in {"user", "assistant"} or not raw:
+        # Small local models amplify their own earlier mistakes. Customer turns
+        # preserve the useful topic and tone without creating that feedback loop.
+        if role != "user" or not raw:
             continue
-        if role == "assistant" and not _assistant_history_is_useful(raw):
-            continue
-        content = raw[: min(240, remaining)]
+        content = raw[: min(180, remaining)]
         selected.append({"role": role, "content": content})
         remaining -= len(content)
     selected.reverse()
@@ -1550,10 +1578,10 @@ class LocalGGUFProvider(ConversationProvider):
         llm = self._load()
         system_prompt = _local_system_prompt(context, baseline, knowledge)
         if corrective_retry:
-            system_prompt += (
-                "\nCORRECTIVE RETRY: The first draft was an unusable refusal, echo, or generic non-answer. "
-                "Answer the current user message directly in one or two concise sentences. Do not mention this retry."
-            )
+            if baseline.style.language == "en":
+                system_prompt += "\nYour first draft failed. Give a fresh, direct answer now; do not mention the retry."
+            else:
+                system_prompt += "\nالمحاولة الأولى ما نفعتش. اكتب رد جديد ومباشر دلوقتي، وماتذكرش المحاولة."
         messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
         messages.extend(_bounded_history(context.history))
         case_summary = [
@@ -1564,15 +1592,16 @@ class LocalGGUFProvider(ConversationProvider):
         if knowledge:
             latest += f"\n\nمصدر موثوق بعنوان «{knowledge.title}»:\n{knowledge.text}"
         if case_summary:
-            latest += "\n\nOpen cases (reference only): " + json.dumps(case_summary, ensure_ascii=False)
+            label = "Verified open cases" if baseline.style.language == "en" else "حالات مفتوحة مؤكدة"
+            latest += f"\n\n{label}: " + json.dumps(case_summary, ensure_ascii=False)
         messages.append({"role": "user", "content": latest})
         with self._lock:
             reply_result = llm.create_chat_completion(
                 messages=messages,
-                temperature=0.36 if corrective_retry else 0.48,
+                temperature=0.30 if corrective_retry else 0.40,
                 top_p=0.85,
                 repeat_penalty=1.14,
-                max_tokens=120 if corrective_retry else 140,
+                max_tokens=110 if corrective_retry else 128,
             )
         return str(reply_result["choices"][0]["message"]["content"] or "")
 
@@ -1585,6 +1614,7 @@ class LocalGGUFProvider(ConversationProvider):
         if signals.answer_mode == AnswerMode.FACTUAL:
             knowledge = await _wikipedia_knowledge(context)
         generated = False
+        used_degraded_fallback = False
         if signals.answer_mode == AnswerMode.FACTUAL:
             # The small local model can turn a correct citation into a fluent but
             # false causal claim. Factual answers therefore stay extractive: use
@@ -1624,6 +1654,7 @@ class LocalGGUFProvider(ConversationProvider):
             else:
                 signals = _conversation_signals(context, baseline.intent)
                 response_text = _safe_structured_fallback(signals, baseline.style) or baseline.text
+            used_degraded_fallback = generated
         if knowledge and response_text != baseline.text:
             source_label = "Source" if baseline.style.language == "en" else "المصدر"
             response_text = f"{response_text.rstrip()}\n{source_label}: ويكيبيديا — {knowledge.title}"
@@ -1633,9 +1664,9 @@ class LocalGGUFProvider(ConversationProvider):
             baseline.confidence,
             _contextual_style(context),
             baseline.action,
-            self.name,
-            self.model,
-            False,
+            self._fallback.name if used_degraded_fallback else self.name,
+            None if used_degraded_fallback else self.model,
+            used_degraded_fallback,
         )
 
 

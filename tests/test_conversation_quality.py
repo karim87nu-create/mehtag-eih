@@ -146,7 +146,8 @@ def test_arbitrary_advice_turn_is_model_led_and_does_not_call_wikipedia(tmp_path
     class AdviceModel:
         def create_chat_completion(self, **kwargs):
             calls["model"] += 1
-            assert '"answer_mode": "ADVICE"' in kwargs["messages"][0]["content"]
+            assert "نصيحة محددة ومفيدة" in kwargs["messages"][0]["content"]
+            assert "{" not in kwargs["messages"][0]["content"]
             assert kwargs["messages"][-1]["content"].startswith("/no_think")
             return {
                 "choices": [{
@@ -195,8 +196,8 @@ def test_local_model_gets_one_corrective_retry_for_refusal_and_strips_thinking(t
     provider = local_provider(tmp_path, model)
     reply = run(provider, TurnContext("أنا تايه في الموضوع ده", [], "ar-EG", []))
     assert len(model.prompts) == 2
-    assert "CORRECTIVE RETRY" not in model.prompts[0]
-    assert "CORRECTIVE RETRY" in model.prompts[1]
+    assert "المحاولة الأولى" not in model.prompts[0]
+    assert "المحاولة الأولى" in model.prompts[1]
     assert "<think>" not in reply.text
     assert "خطوة صغيرة" in reply.text
 
@@ -216,9 +217,55 @@ def test_local_history_is_bounded_but_keeps_the_newest_context(tmp_path):
     provider = local_provider(tmp_path, HistoryModel())
     run(provider, TurnContext("كمّل من هنا", history, "ar-EG", []))
     dialogue = captured["messages"][1:-1]
-    assert len(dialogue) <= 6
-    assert sum(len(item["content"]) for item in dialogue) <= 1100
-    assert "turn-29" in dialogue[-1]["content"]
+    assert len(dialogue) <= 4
+    assert sum(len(item["content"]) for item in dialogue) <= 700
+    assert all(item["role"] == "user" for item in dialogue)
+    assert "turn-28" in dialogue[-1]["content"]
+
+
+def test_generic_service_non_answers_are_rejected_and_fallback_is_honest(tmp_path):
+    class GenericModel:
+        calls = 0
+
+        def create_chat_completion(self, **_):
+            self.calls += 1
+            text = (
+                "أهلًا بيك، ماذا يمكنني أن أساعدك؟"
+                if self.calls == 1
+                else "أنا هنا لمساعدتك، ماذا يمكنني أن أقدم لك؟"
+            )
+            return {"choices": [{"message": {"content": text}}]}
+
+    model = GenericModel()
+    provider = local_provider(tmp_path, model)
+    reply = run(provider, TurnContext("أنا مخنوق ومش عارف أبدأ منين", [], "ar-EG", []))
+    assert model.calls == 2
+    assert reply.intent == Intent.SMALL_TALK
+    assert "عشر دقايق" in reply.text
+    assert reply.provider == "local-fallback"
+    assert reply.degraded is True
+
+
+def test_bad_joke_draft_does_not_recycle_old_food_reply(tmp_path):
+    class BadJokeModel:
+        def create_chat_completion(self, **_):
+            return {"choices": [{"message": {"content": "ممكن شوفان بالخضار، ودي كانت النكتة."}}]}
+
+    provider = local_provider(tmp_path, BadJokeModel())
+    context = TurnContext(
+        "قول نكتة",
+        [
+            {"role": "user", "content": "اقترح عشا خفيف"},
+            {"role": "assistant", "content": "ممكن شوفان بالخضار."},
+        ],
+        "ar-EG",
+        [],
+    )
+    reply = run(provider, context)
+    assert "شوفان" not in reply.text
+    assert "😄" in reply.text
+    assert reply.provider == "local-fallback"
+    assert reply.degraded is True
 
 
 def test_remote_provider_requires_explicit_opt_in(monkeypatch):

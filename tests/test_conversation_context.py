@@ -44,14 +44,15 @@ def test_local_model_repairs_likely_typo_and_uses_previous_turn(tmp_path, monkey
             system = messages[0]["content"]
             latest = messages[-1]["content"]
             if self.calls == 1:
-                assert '"likely_correction": "زهقان"' in system
+                assert "«زهقان»" in system
+                assert "{" not in system
                 assert "طب انا وهقان" in latest
                 return {"choices": [{"message": {"content": "غالبًا قصدك زهقان؛ لو ده قصدك نغيّر الجو سوا، ولو لأ صححلي الكلمة."}}]}
             assert any(
                 item["role"] == "user" and item["content"] == "طب انا وهقان"
                 for item in messages
             )
-            assert '"previous_user": "طب انا وهقان"' in system
+            assert "آخر رسالة للمستخدم" in system
             return {"choices": [{"message": {"content": "معاك حق؛ من رسالتك اللي فاتت غالبًا قصدك زهقان، وده السياق اللي هكمل منه."}}]}
 
     model = ContextModel()
@@ -92,8 +93,8 @@ def test_incomplete_request_and_short_followup_stay_model_led_but_block_action(t
             self.calls += 1
             messages = kwargs["messages"]
             system = messages[0]["content"]
-            assert '"missing_request_fields": ["target"]' in system
-            assert '"authorized": false' in system
+            assert "الحاجة أو الخدمة المطلوبة ناقصة" in system
+            assert "بحثًا أو طلبًا بدأ" in system
             if self.calls == 1:
                 return {"choices": [{"message": {"content": "عايز تطلب إيه بالضبط—حاجة ولا خدمة؟"}}]}
             assert any(
