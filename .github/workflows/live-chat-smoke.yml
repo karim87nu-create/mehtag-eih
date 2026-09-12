@@ -1,0 +1,109 @@
+name: Live chat smoke
+
+on:
+  push:
+    paths:
+      - '.github/workflows/live-chat-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run production conversational smoke test
+        env:
+          BASE_URL: https://mehtag-eih-experience-production.up.railway.app
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, uuid, urllib.request, urllib.error
+
+          base = os.environ['BASE_URL'].rstrip('/')
+          customer = str(uuid.uuid4())
+          thread = None
+          results = []
+
+          def call(message, turn_id, thread_id=None):
+              body = {
+                  'message': message,
+                  'locale': 'ar-EG',
+                  'client_turn_id': turn_id,
+                  'customer_ref': customer,
+              }
+              if thread_id:
+                  body['thread_id'] = thread_id
+              req = urllib.request.Request(
+                  base + '/api/chat',
+                  data=json.dumps(body, ensure_ascii=False).encode('utf-8'),
+                  headers={
+                      'Content-Type': 'application/json; charset=utf-8',
+                      'X-Customer-Ref': customer,
+                  },
+                  method='POST',
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=90) as r:
+                      raw = r.read().decode('utf-8')
+                      return r.status, json.loads(raw)
+              except urllib.error.HTTPError as e:
+                  raw = e.read().decode('utf-8', errors='replace')
+                  print('HTTP_ERROR', e.code, message, raw)
+                  raise
+
+          turns = ['عايز موتوسيكل', 'جديد', '70 ألف', 'مصر الجديدة', 'ابدأ', 'شكرا']
+          ids = [str(uuid.uuid4()) for _ in turns]
+          turn5_envelope = None
+
+          for idx, (message, turn_id) in enumerate(zip(turns, ids), 1):
+              status, data = call(message, turn_id, thread)
+              if thread is None:
+                  thread = data.get('thread_id')
+              summary = {
+                  'turn': idx,
+                  'input': message,
+                  'http': status,
+                  'thread_id': data.get('thread_id'),
+                  'intent': data.get('intent'),
+                  'action': data.get('action'),
+                  'linked_case': data.get('linked_case'),
+                  'card': data.get('card'),
+                  'assistant': (data.get('message') or {}).get('content'),
+              }
+              results.append(summary)
+              print('TURN_RESULT=' + json.dumps(summary, ensure_ascii=False))
+              assert status == 200
+              assert data.get('thread_id') == thread
+              if idx == 5:
+                  turn5_envelope = data
+
+          # Exact replay of turn 5 must be byte-equivalent semantically and must not create a second action/case.
+          retry_status, retry = call('ابدأ', ids[4], thread)
+          print('TURN5_RETRY=' + json.dumps(retry, ensure_ascii=False))
+          assert retry_status == 200
+          assert retry == turn5_envelope, 'Turn 5 retry did not return the exact cached envelope'
+
+          # Fetch persisted conversation/case links visible through the production API.
+          req = urllib.request.Request(
+              base + '/api/conversations/' + thread,
+              headers={'X-Customer-Ref': customer},
+              method='GET',
+          )
+          with urllib.request.urlopen(req, timeout=60) as r:
+              history = json.loads(r.read().decode('utf-8'))
+          print('HISTORY=' + json.dumps(history, ensure_ascii=False))
+
+          cases = history.get('cases') or []
+          request_cases = [c for c in cases if str(c.get('type', '')).upper() == 'REQUEST']
+          print('TEST_CUSTOMER=' + customer)
+          print('TEST_THREAD=' + thread)
+          print('REQUEST_CASE_COUNT=' + str(len(request_cases)))
+
+          # Small talk must not execute an action or add a new linked request.
+          last = results[-1]
+          assert (last.get('action') or {}).get('status') != 'EXECUTED', 'شكرا executed a business action'
+
+          # Critical invariant requested for the draft flow: one accumulated request/case only.
+          assert len(request_cases) == 1, f'Expected exactly 1 REQUEST case, got {len(request_cases)}: {request_cases}'
+
+          print('SMOKE_PASS=1')
+          PY
