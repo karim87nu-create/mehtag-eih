@@ -197,6 +197,21 @@ def _draft_aware_policy(reply, context):
             degraded=_provider.degraded,
         )
 
+    # A bare start command without a live draft is never enough authority to
+    # create a request.  This also prevents an abandoned draft from being
+    # resurrected through the base policy's short-imperative context repair.
+    if _is_execute_control(current) and not draft:
+        return ProviderReply(
+            "مفيش طلب جاهز للتنفيذ دلوقتي. قولي محتاج إيه الأول وبعدها قول «ابدأ».",
+            Intent.CONTINUATION,
+            1.0,
+            safe.style,
+            ActionProposal(ActionType.NONE, False, 1.0),
+            provider=_provider.name,
+            model=getattr(safe, "model", None),
+            degraded=_provider.degraded,
+        )
+
     # A bare explicit start command executes the accumulated draft, not the
     # single word "ابدأ" and not merely the immediately preceding fragment.
     if draft and _is_execute_control(current):
