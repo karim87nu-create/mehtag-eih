@@ -69,7 +69,7 @@ async def discover_businesses(text, area=None, locale_context: LocaleContext | s
             except (httpx.HTTPError, ValueError):
                 pass
         headers = {'User-Agent': 'Maak/1.0 (https://github.com/karim87nu-create/mehtag-eih)'}
-        async with httpx.AsyncClient(timeout=12, headers=headers, follow_redirects=False) as client:
+        async with httpx.AsyncClient(timeout=20, headers=headers, follow_redirects=False) as client:
             geocode_params = {
                 'q': ', '.join(value for value in (area, context.search_country) if value),
                 'format': 'jsonv2',
@@ -85,23 +85,31 @@ async def discover_businesses(text, area=None, locale_context: LocaleContext | s
                 return []
             lat, lon = float(locations[0]['lat']), float(locations[0]['lon'])
             tag, value = category
-            # Fixed catalog tags and numeric coordinates: user text cannot inject QL.
-            q = f'[out:json][timeout:10];nwr["{tag}"="{value}"](around:5000,{lat},{lon});out center tags 15;'
-            response = await client.post('https://overpass-api.de/api/interpreter', data={'data': q})
-            response.raise_for_status()
+
+            # Prefer the requested neighborhood. If that contains no tagged
+            # suppliers at all, widen once to a city-scale radius instead of
+            # falsely concluding that no supplier exists. We never widen when
+            # the local radius already produced leads.
             result = []
-            for element in response.json().get('elements', []):
-                tags = element.get('tags', {})
-                localized_name = tags.get(f'name:{context.language}') if context.language != 'mixed' else None
-                language_fallback = tags.get('name:ar') if context.language == 'ar' else tags.get('name:en')
-                name = localized_name or tags.get('name') or language_fallback
-                if not name:
-                    continue
-                kind, oid = element['type'], element['id']
-                result.append({'external_id': f'osm-{kind}-{oid}', 'name': name,
-                    'website': tags.get('contact:website') or tags.get('website'),
-                    'phone': tags.get('contact:phone') or tags.get('phone'),
-                    'source': f'https://www.openstreetmap.org/{kind}/{oid}',
-                    'address': tags.get('addr:full'), 'search_radius_m': 5000})
+            for radius in (5000, 15000):
+                q = f'[out:json][timeout:15];nwr["{tag}"="{value}"](around:{radius},{lat},{lon});out center tags 15;'
+                response = await client.post('https://overpass-api.de/api/interpreter', data={'data': q})
+                response.raise_for_status()
+                result = []
+                for element in response.json().get('elements', []):
+                    tags = element.get('tags', {})
+                    localized_name = tags.get(f'name:{context.language}') if context.language != 'mixed' else None
+                    language_fallback = tags.get('name:ar') if context.language == 'ar' else tags.get('name:en')
+                    name = localized_name or tags.get('name') or language_fallback
+                    if not name:
+                        continue
+                    kind, oid = element['type'], element['id']
+                    result.append({'external_id': f'osm-{kind}-{oid}', 'name': name,
+                        'website': tags.get('contact:website') or tags.get('website'),
+                        'phone': tags.get('contact:phone') or tags.get('phone'),
+                        'source': f'https://www.openstreetmap.org/{kind}/{oid}',
+                        'address': tags.get('addr:full'), 'search_radius_m': radius})
+                if result:
+                    break
             save(key, result)
             return result
