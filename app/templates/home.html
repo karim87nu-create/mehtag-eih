@@ -94,6 +94,7 @@
 <script src="/static/execution.js" defer></script>
 <script>
 (function(){
+  const conversation=document.getElementById('conversation');
   const thread=document.getElementById('chatThread');
   const empty=document.getElementById('emptyThread');
   const degraded=document.getElementById('degradedNotice');
@@ -126,11 +127,14 @@
     return null;
   }
 
-  function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+  function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#039;'}[m]))}
   function setDirection(node,text){
     const ar=(text.match(/[\u0600-\u06ff]/g)||[]).length;
     const en=(text.match(/[A-Za-z]/g)||[]).length;
     node.dir=ar>=en?'rtl':'ltr';
+  }
+  function scrollConversation(behavior='auto'){
+    requestAnimationFrame(()=>conversation.scrollTo({top:conversation.scrollHeight,behavior}));
   }
   function addMessage(role,text,animate=true){
     empty.classList.add('hidden');
@@ -139,17 +143,17 @@
       ? `<div class="assistant-avatar">م</div><div class="bubble">${esc(text)}</div>`
       : `<div class="bubble">${esc(text)}</div>`;
     setDirection(wrap.querySelector('.bubble'),text);thread.appendChild(wrap);
-    requestAnimationFrame(()=>wrap.scrollIntoView({behavior:'smooth',block:'end'}));
+    if(animate)scrollConversation(role==='assistant'?'smooth':'auto');
   }
   function thinking(){
     const node=document.createElement('div');node.className='chat-message assistant entering thinking-message';
     node.innerHTML='<div class="assistant-avatar">م</div><div class="bubble"><span class="thinking-inline"><i></i><i></i><i></i></span></div>';
-    thread.appendChild(node);node.scrollIntoView({behavior:'smooth',block:'end'});return node;
+    thread.appendChild(node);scrollConversation('auto');return node;
   }
   function addCard(card){
     if(!card)return;const wrap=document.createElement('a');wrap.className='chat-context-card entering';wrap.href=card.url||'#';
     wrap.innerHTML=`<small>${esc(card.label||'متابعة')}</small><b>${esc(card.title||'')}</b><span>افتح الحالة ‹</span>`;
-    thread.appendChild(wrap);wrap.scrollIntoView({behavior:'smooth',block:'end'});
+    thread.appendChild(wrap);scrollConversation('smooth');
   }
   async function loadHistory(){
     if(!threadId)return;
@@ -158,7 +162,7 @@
       const r=await fetch(`/api/conversations/${encodeURIComponent(threadId)}`,{cache:'no-store',credentials:'same-origin'});
       if(requestedThread!==threadId)return;
       if(!r.ok){if(r.status===404){storedRemove(THREAD_KEY);threadId=null}return}
-      const data=await r.json();data.messages.forEach(m=>addMessage(m.role,m.content,false));degraded.classList.toggle('hidden',!data.degraded);
+      const data=await r.json();data.messages.forEach(m=>addMessage(m.role,m.content,false));degraded.classList.toggle('hidden',!data.degraded);scrollConversation('auto');
     }catch(e){hint.textContent='المحادثة المحفوظة مش متاحة دلوقتي.'}
   }
   async function initialize(){
@@ -213,7 +217,10 @@
       hint.textContent=late?'تقدر تكمّل برسالة عادية.':'راجع الاتصال وجرب تاني.';
       input.value=text;autoSize();
     }
-    finally{clearTimeout(timeout);clearTimeout(progress);clearTimeout(slower);busy=false;send.disabled=false;mic.disabled=false;input.focus()}
+    finally{
+      clearTimeout(timeout);clearTimeout(progress);clearTimeout(slower);busy=false;send.disabled=false;mic.disabled=false;
+      try{input.focus({preventScroll:true})}catch(_){input.focus()}
+    }
   }
   form.addEventListener('submit',e=>{e.preventDefault();handle(input.value)});
   input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();handle(input.value)}});
