@@ -1,0 +1,31 @@
+name: OSM motorcycle probe
+on:
+  push:
+    paths:
+      - '.github/workflows/osm-motorcycle-probe.yml'
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe radii
+        run: |
+          python3 - <<'PY'
+          import json, urllib.parse, urllib.request
+          headers={'User-Agent':'Maak/1.0 (https://github.com/karim87nu-create/mehtag-eih)'}
+          params=urllib.parse.urlencode({'q':'مصر الجديدة, مصر','format':'jsonv2','limit':1,'countrycodes':'eg'})
+          req=urllib.request.Request('https://nominatim.openstreetmap.org/search?'+params,headers=headers)
+          with urllib.request.urlopen(req,timeout=30) as r: loc=json.loads(r.read().decode())[0]
+          lat,lon=float(loc['lat']),float(loc['lon'])
+          print('CENTER',lat,lon)
+          for radius in (5000,10000,15000,25000):
+              q=f'[out:json][timeout:20];nwr["shop"="motorcycle"](around:{radius},{lat},{lon});out center tags 50;'
+              data=urllib.parse.urlencode({'data':q}).encode()
+              req=urllib.request.Request('https://overpass-api.de/api/interpreter',data=data,headers=headers,method='POST')
+              with urllib.request.urlopen(req,timeout=60) as r: payload=json.loads(r.read().decode())
+              named=[e for e in payload.get('elements',[]) if (e.get('tags') or {}).get('name')]
+              print('RADIUS',radius,'TOTAL',len(payload.get('elements',[])),'NAMED',len(named))
+              for e in named[:10]: print('LEAD',radius,(e.get('tags') or {}).get('name'))
+          print('PROBE_DONE=1')
+          PY
