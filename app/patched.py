@@ -10,7 +10,7 @@ import re
 
 from . import main as main_module
 from .conversation import ActionProposal, ActionType, Intent, ProviderReply, ResponseStyle
-from .intent_router import Route, route_turn
+from .intent_router import Route, RouteDecision, route_turn, semantic_decision
 
 
 app = main_module.app
@@ -221,12 +221,30 @@ class DraftAwareProvider:
     async def respond(self, context):
         current = _clean(context.message)
         draft = _draft_text(context)
-        route = route_turn(current, draft_exists=bool(draft)).route
+        decision = route_turn(current, draft_exists=bool(draft))
+
+        # Deterministic recognition is reserved for clear controls and cheap,
+        # high-certainty paths. Ambiguous language is classified semantically
+        # using the live draft and recent conversation rather than a phrase list.
+        needs_semantic = not decision.deterministic or (
+            bool(draft) and decision.route in {Route.REQUEST_DETAIL, Route.CASUAL_CHAT}
+        )
+        if needs_semantic:
+            classifier = getattr(self.wrapped, "classify_route", None)
+            if classifier is not None:
+                semantic = semantic_decision(await classifier(context, draft))
+                if semantic is not None and semantic.confidence >= 0.68:
+                    decision = semantic
+        setattr(context, "semantic_route_decision", decision)
+        route = decision.route
 
         # These paths are fully determined by the server policy below. Running a
         # 1.7B local model first only adds seconds of latency and cannot improve
         # the result.
-        if draft and (_is_execute_control(current) or _is_cancel_control(current) or _is_draft_detail(context)):
+        semantic_detail = (
+            draft and route == Route.REQUEST_DETAIL and decision.fits_active_draft
+        )
+        if draft and (_is_execute_control(current) or _is_cancel_control(current) or semantic_detail or _is_draft_detail(context)):
             return _placeholder(Intent.NEW_REQUEST if _is_request_seed(current) else Intent.CONTINUATION)
         if _is_execute_control(current) and not draft:
             return _placeholder(Intent.CONTINUATION)
@@ -301,6 +319,7 @@ def _draft_aware_policy(reply, context):
     safe = _original_policy(reply, context)
     draft = _draft_text(context)
     current = _clean(context.message)
+    decision = getattr(context, "semantic_route_decision", None)
 
     # Cancelling a pending draft is a hard boundary. It never creates a case,
     # and a later bare "ابدأ" cannot resurrect the abandoned request.
@@ -347,7 +366,21 @@ def _draft_aware_policy(reply, context):
 
     # A request seed and its short follow-up details are a draft, not separate
     # small-talk turns and not executable actions by themselves.
-    if draft and _is_draft_detail(context):
+    semantic_detail = bool(
+        decision
+        and decision.route == Route.REQUEST_DETAIL
+        and decision.fits_active_draft
+        and decision.confidence >= 0.68
+    )
+    semantic_conversation = bool(
+        decision
+        and decision.route in {
+            Route.CASUAL_CHAT, Route.FACTUAL_QUESTION, Route.COMPARISON_RECOMMENDATION,
+            Route.MEDIA_IMAGE_REQUEST, Route.REQUEST_STATUS_FOLLOWUP, Route.EXTERNAL_ACTION,
+            Route.FUTURE_TASK,
+        }
+    )
+    if draft and (semantic_detail or (_is_draft_detail(context) and not semantic_conversation)):
         first = len(_draft_segment(context)) == 1 and _is_request_seed(current)
         # If an older request is already linked to the thread, using
         # CONTINUATION here would make the base endpoint attach that old case's

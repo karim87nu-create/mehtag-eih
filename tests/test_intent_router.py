@@ -1,4 +1,4 @@
-from app.intent_router import Route, route_turn
+from app.intent_router import Route, route_turn, semantic_decision
 
 
 def test_required_arabic_routes():
@@ -28,3 +28,15 @@ def test_motorcycle_draft_routes_without_executing_early():
 def test_questions_and_chat_never_become_draft_details():
     for text in ("ايه الفرق بين الجديد والمستعمل؟", "هو ده كويس؟", "انا متردد", "بص", "شكرا"):
         assert route_turn(text, draft_exists=True).route != Route.REQUEST_DETAIL
+
+
+def test_semantic_decision_validates_model_output():
+    result = semantic_decision({
+        "route": "comparison_recommendation", "confidence": 0.91,
+        "fits_active_draft": False, "execute_now": False,
+    })
+    assert result is not None
+    assert result.route == Route.COMPARISON_RECOMMENDATION
+    assert result.confidence == 0.91
+    assert result.deterministic is False
+    assert semantic_decision({"route": "invented", "confidence": 1}) is None

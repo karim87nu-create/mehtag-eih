@@ -13,7 +13,7 @@ import re
 import unicodedata
 
 
-ROUTER_VERSION = "2026-09-13.1"
+ROUTER_VERSION = "2026-09-13.2-semantic"
 
 
 class Route(str, Enum):
@@ -35,6 +35,26 @@ class RouteDecision:
     route: Route
     confidence: float
     deterministic: bool = True
+    fits_active_draft: bool = False
+    execute_now: bool = False
+
+
+def semantic_decision(data: dict | None) -> RouteDecision | None:
+    """Validate an untrusted structured decision returned by a language model."""
+    if not isinstance(data, dict):
+        return None
+    try:
+        route = Route(str(data.get("route") or ""))
+        confidence = max(0.0, min(float(data.get("confidence", 0.0)), 1.0))
+    except (TypeError, ValueError):
+        return None
+    return RouteDecision(
+        route=route,
+        confidence=confidence,
+        deterministic=False,
+        fits_active_draft=bool(data.get("fits_active_draft", False)),
+        execute_now=bool(data.get("execute_now", False)),
+    )
 
 
 def normalize(text: str) -> str:

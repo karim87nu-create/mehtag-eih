@@ -1605,6 +1605,50 @@ class LocalGGUFProvider(ConversationProvider):
             )
         return str(reply_result["choices"][0]["message"]["content"] or "")
 
+    def _classify_route_sync(self, context: TurnContext, draft: str | None) -> dict:
+        """Classify meaning from context without authorizing any side effect."""
+        llm = self._load()
+        classes = (
+            "casual_chat, factual_question, comparison_recommendation, media/image_request, "
+            "request_seed, request_detail, request_execute, request_cancel, "
+            "request_status/followup, external_action, future_task"
+        )
+        prompt = (
+            "You route Arabic and English assistant messages by meaning, not keywords. "
+            f"Allowed routes: {classes}. Return ONLY compact JSON with keys route, confidence, "
+            "fits_active_draft, execute_now. fits_active_draft is true only when the message is a "
+            "constraint on the live draft. A question, opinion request, comparison, hesitation, "
+            "small talk, or information-only message never fits the draft. execute_now is true only "
+            "for an explicit request to act now; wanting or discussing something is not execution."
+        )
+        history = _bounded_history(context.history)[-6:]
+        payload = {
+            "message": context.message,
+            "live_draft": draft,
+            "recent_history": history,
+        }
+        with self._lock:
+            result = llm.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": "/no_think\n" + json.dumps(payload, ensure_ascii=False)},
+                ],
+                temperature=0.0,
+                top_p=0.8,
+                repeat_penalty=1.05,
+                max_tokens=72,
+                response_format={"type": "json_object"},
+            )
+        raw = _strip_model_artifacts(str(result["choices"][0]["message"]["content"] or ""))
+        return json.loads(raw)
+
+    async def classify_route(self, context: TurnContext, draft: str | None = None) -> dict | None:
+        try:
+            return await asyncio.to_thread(self._classify_route_sync, context, draft)
+        except Exception as exc:
+            logger.warning("Semantic route classification failed: %s", str(exc)[:300])
+            return None
+
     async def respond(self, context: TurnContext) -> ProviderReply:
         baseline = await self._fallback.respond(context)
         baseline.style = _contextual_style(context)
@@ -1692,6 +1736,16 @@ class ResilientProvider(ConversationProvider):
             except Exception as exc:
                 logger.warning("Primary conversation provider failed; using fallback: %s", str(exc)[:700])
         return await self.fallback.respond(context)
+
+    async def classify_route(self, context: TurnContext, draft: str | None = None) -> dict | None:
+        classifier = getattr(self.primary, "classify_route", None)
+        if classifier is None:
+            return None
+        try:
+            return await asyncio.wait_for(classifier(context, draft), timeout=min(self.timeout_seconds, 8.0))
+        except Exception as exc:
+            logger.warning("Semantic router unavailable; using conservative route: %s", str(exc)[:300])
+            return None
 
 
 def build_provider() -> ConversationProvider:
