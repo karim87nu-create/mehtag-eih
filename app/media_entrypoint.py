@@ -4,6 +4,7 @@ import re
 
 from . import patched as patched_module
 from .conversation import ActionProposal, ActionType, Intent, ProviderReply, ResponseStyle
+from .intent_router import Route, route_turn
 from .media_search import search_images
 
 app = patched_module.app
@@ -14,13 +15,14 @@ app = patched_module.app
 _MEDIA_REQUEST_RE = re.compile(
     r"(?:(?:وريني|ورني|اعرض(?:لي)?|فرجني|show\s+me).{0,36}(?:صور|صوره|صورة|photos?|pictures?|images?)|"
     r"(?:عايز|عاوز|محتاج|عايزه|عاوزه|محتاجه).{0,24}(?:صور|صوره|صورة)|"
-    r"^(?:صور|صوره|صورة)\b)",
+    r"^(?:صور|صوره|صورة)(?:\b|(?=ال|ل|\s)))",
     re.IGNORECASE,
 )
 
 
 def _is_media_request(text: str) -> bool:
-    return bool(_MEDIA_REQUEST_RE.search(patched_module._clean(text)))
+    value = patched_module._clean(text)
+    return bool(_MEDIA_REQUEST_RE.search(value)) or route_turn(value).route == Route.MEDIA_IMAGE_REQUEST
 
 
 _original_request_seed = patched_module._is_request_seed
@@ -70,6 +72,14 @@ async def image_search(query: str = ""):
         return {"query": "", "items": [], "source": "none"}
     value = re.sub(
         r"^(?:عايز|عاوز|محتاج|عايزه|عاوزه|محتاجه)\s+(?=(?:صور|صوره|صورة)\b)",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    ).strip()
+    # Mobile Arabic typing commonly joins the command to the article, for
+    # example "صورال RKV250". Keep the product term and discard the command.
+    value = re.sub(
+        r"^(?:صورال|صورلي|صورل|صور(?:ه|ة)?)\s*",
         "",
         value,
         flags=re.IGNORECASE,

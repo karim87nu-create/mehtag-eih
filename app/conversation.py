@@ -1494,6 +1494,23 @@ def _strip_model_artifacts(text: str) -> str:
     if re.search(r"<think>", value, flags=re.IGNORECASE):
         value = value.split("<think>", 1)[0]
     value = re.sub(r"^\s*(?:assistant|معاك)\s*:\s*", "", value, flags=re.IGNORECASE)
+    # Some small models expose their scratchpad without <think> tags. Never
+    # show meta-commentary about the user, instructions, or composing a reply.
+    lowered = value.casefold()
+    reasoning_markers = (
+        "the user is asking", "the user asked", "i need to provide",
+        "i need to respond", "i should confirm", "as per the instructions",
+        "provide a response", "let me see", "first, i should", "we need to",
+        "المستخدم يطلب", "المستخدم يسأل", "يجب أن أرد", "دعني أفكر",
+        "سأقوم بتحليل", "حسب التعليمات",
+    )
+    marker_count = sum(marker in lowered for marker in reasoning_markers)
+    strong_marker = any(
+        marker in lowered
+        for marker in ("the user is asking", "the user asked", "المستخدم يطلب", "المستخدم يسأل")
+    )
+    if strong_marker or marker_count >= 2:
+        return ""
     return value.strip()
 
 

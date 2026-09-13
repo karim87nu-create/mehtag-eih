@@ -202,6 +202,28 @@ def test_local_model_gets_one_corrective_retry_for_refusal_and_strips_thinking(t
     assert "خطوة صغيرة" in reply.text
 
 
+def test_local_model_never_surfaces_untagged_internal_reasoning(tmp_path):
+    class LeakyThenSafeModel:
+        calls = 0
+
+        def create_chat_completion(self, **_):
+            self.calls += 1
+            if self.calls == 1:
+                return {"choices": [{"message": {"content": (
+                    "Let me see. The user is asking for pictures of the RKV250. "
+                    "I need to provide a response in Arabic as per the instructions."
+                )}}]}
+            return {"choices": [{"message": {"content": "أكيد، قولّي حابب تعرف إيه بالضبط؟"}}]}
+
+    model = LeakyThenSafeModel()
+    provider = local_provider(tmp_path, model)
+    reply = run(provider, TurnContext("ممكن تساعدني؟", [], "ar-EG", []))
+    assert model.calls == 2
+    assert "the user" not in reply.text.casefold()
+    assert "instructions" not in reply.text.casefold()
+    assert "أكيد" in reply.text
+
+
 def test_local_history_is_bounded_but_keeps_the_newest_context(tmp_path):
     captured = {}
 
