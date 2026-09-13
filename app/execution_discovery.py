@@ -14,7 +14,12 @@ from .locale import LocaleContext, resolve_locale
 
 _lock = asyncio.Lock()
 _last_call = 0.0
-DISCOVERY_CACHE_VERSION = "radius-v2"
+DISCOVERY_CACHE_VERSION = "radius-v3"
+OVERPASS_ENDPOINTS = (
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+)
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 CATEGORIES = [
     (("موتوسيكل", "موتوسكل", "سكوتر", "motorcycle", "scooter"), "shop", "motorcycle"),
@@ -51,6 +56,39 @@ def save(key, payload):
         db.commit()
 
 
+async def _overpass(client: httpx.AsyncClient, query: str) -> dict:
+    """Run one Overpass query with bounded retry/failover.
+
+    Public Overpass instances can transiently throttle or time out. A temporary
+    outage is not evidence that no supplier exists, so only return data after a
+    successful response and raise if every endpoint is unavailable.
+    """
+    last_error: Exception | None = None
+    for endpoint_index, endpoint in enumerate(OVERPASS_ENDPOINTS):
+        for attempt in range(2):
+            if endpoint_index or attempt:
+                await asyncio.sleep(1.5 * (attempt + 1))
+            try:
+                response = await client.post(endpoint, data={"data": query}, timeout=28.0)
+                if response.status_code in RETRYABLE_STATUS:
+                    last_error = httpx.HTTPStatusError(
+                        f"Overpass temporary status {response.status_code}",
+                        request=response.request,
+                        response=response,
+                    )
+                    continue
+                response.raise_for_status()
+                payload = response.json()
+                if isinstance(payload, dict):
+                    return payload
+                last_error = ValueError("Overpass returned a non-object payload")
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError, ValueError) as exc:
+                last_error = exc
+    if last_error:
+        raise last_error
+    raise RuntimeError("Overpass unavailable")
+
+
 async def discover_businesses(text, area=None, locale_context: LocaleContext | str | None = None):
     global _last_call
     context = locale_context if isinstance(locale_context, LocaleContext) else resolve_locale(locale_context)
@@ -85,7 +123,7 @@ async def discover_businesses(text, area=None, locale_context: LocaleContext | s
                 pass
 
         headers = {"User-Agent": "Maak/1.0 supplier-discovery"}
-        async with httpx.AsyncClient(timeout=20, headers=headers, follow_redirects=False) as client:
+        async with httpx.AsyncClient(timeout=28, headers=headers, follow_redirects=False) as client:
             geocode_params = {
                 "q": ", ".join(value for value in (area, context.search_country) if value),
                 "format": "jsonv2",
@@ -106,13 +144,15 @@ async def discover_businesses(text, area=None, locale_context: LocaleContext | s
             result = []
 
             # Prefer the requested neighborhood, then widen once only when no
-            # named local lead exists.
-            for radius in (5000, 15000):
-                q = f'[out:json][timeout:15];nwr["{tag}"="{value}"](around:{radius},{lat},{lon});out center tags 15;'
-                response = await client.post("https://overpass-api.de/api/interpreter", data={"data": q})
-                response.raise_for_status()
+            # named local lead exists. Back off before the wider query so public
+            # Overpass infrastructure is not hit in a burst.
+            for index, radius in enumerate((5000, 15000)):
+                if index:
+                    await asyncio.sleep(1.5)
+                q = f'[out:json][timeout:20];nwr["{tag}"="{value}"](around:{radius},{lat},{lon});out center tags 15;'
+                payload = await _overpass(client, q)
                 result = []
-                for element in response.json().get("elements", []):
+                for element in payload.get("elements", []):
                     tags = element.get("tags", {})
                     localized_name = tags.get(f"name:{context.language}") if context.language != "mixed" else None
                     language_fallback = tags.get("name:ar") if context.language == "ar" else tags.get("name:en")
