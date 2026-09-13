@@ -1,0 +1,41 @@
+name: Live media smoke v2
+
+on:
+  push:
+    paths:
+      - '.github/workflows/live-media-smoke-v2.yml'
+
+jobs:
+  media:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify live media path
+        run: |
+          python - <<'PY'
+          import json, uuid, urllib.parse, urllib.request
+          base='https://mehtag-eih-experience-production.up.railway.app'
+          url=base+'/api/images?'+urllib.parse.urlencode({'query':'rkv250'})
+          with urllib.request.urlopen(url, timeout=30) as r:
+              data=json.loads(r.read().decode())
+          print('IMAGE_QUERY=',data.get('query'))
+          print('IMAGE_SOURCE=',data.get('source'))
+          print('IMAGE_ITEMS=',len(data.get('items') or []))
+          if not data.get('items'):
+              raise SystemExit('no image items')
+          customer=str(uuid.uuid4()); turn=str(uuid.uuid4())
+          body=json.dumps({'message':'عايز صور الموتوسيكل rkv250','locale':'ar-EG','client_turn_id':turn}).encode()
+          req=urllib.request.Request(base+'/api/chat',data=body,method='POST',headers={'Content-Type':'application/json','Accept':'application/json','X-Customer-Ref':customer})
+          with urllib.request.urlopen(req,timeout=30) as r:
+              chat=json.loads(r.read().decode())
+          text=((chat.get('message') or {}).get('content') or '')
+          action=chat.get('action') or {}
+          print('CHAT_REPLY=',text)
+          print('ACTION=',action)
+          if action.get('status')=='EXECUTED' or action.get('type') not in (None,'NONE'):
+              raise SystemExit('media request executed an action')
+          if any(x in text for x in ('كمّل المواصفات','لسه مش متوصل','ضفت «صور»')):
+              raise SystemExit('stale media reply')
+          if 'الصور' not in text:
+              raise SystemExit('media acknowledgement missing')
+          print('MEDIA_SMOKE_PASS=1')
+          PY
