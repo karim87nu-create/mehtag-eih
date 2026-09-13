@@ -13,7 +13,7 @@ import re
 import unicodedata
 
 
-ROUTER_VERSION = "2026-09-13.2-semantic"
+ROUTER_VERSION = "2026-09-13.3-semantic"
 
 
 class Route(str, Enum):
