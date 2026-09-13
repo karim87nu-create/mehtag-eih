@@ -3,7 +3,7 @@
   const input=document.getElementById('chatInput');
   const thread=document.getElementById('chatThread');
   if(!form||!input||!thread)return;
-  const cue=/(?:وريني|ورني|اعرضلي|فرجني|show me).*(?:صور|صورة|photos?|pictures?|images?)/i;
+  const cue=/(?:(?:وريني|ورني|اعرضلي|فرجني|show me).*(?:صور|صورة|صوره|photos?|pictures?|images?)|(?:عايز|عاوز|محتاج|عايزه|عاوزه|محتاجه).*(?:صور|صورة|صوره)|^(?:صور|صورة|صوره)\b)/i;
   form.addEventListener('submit',async()=>{
     const text=input.value.trim();
     if(!cue.test(text))return;
