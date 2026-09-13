@@ -9,7 +9,7 @@ from .media_search import search_images
 
 app = patched_module.app
 
-# Natural image requests like "عايز صور الموتوسيكل" must never be folded into
+# Natural image requests, including joined mobile typing, must never be folded into
 # a purchase draft. Patch the runtime detector without duplicating the larger
 # conversation layer.
 _MEDIA_REQUEST_RE = re.compile(
