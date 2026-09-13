@@ -4,7 +4,9 @@ import hashlib
 import json
 import time
 from datetime import datetime, timedelta
+
 import httpx
+
 from . import services
 from .db import SessionLocal
 from .execution_models import DiscoveryCache
@@ -12,19 +14,24 @@ from .locale import LocaleContext, resolve_locale
 
 _lock = asyncio.Lock()
 _last_call = 0.0
+DISCOVERY_CACHE_VERSION = "radius-v2"
+
 CATEGORIES = [
-    (('موتوسيكل','موتوسكل','سكوتر','motorcycle','scooter'), 'shop', 'motorcycle'),
-    (('سباك','plumber'), 'craft', 'plumber'),
-    (('كهربائي','electrician'), 'craft', 'electrician'),
-    (('نجار','carpenter'), 'craft', 'carpenter'),
-    (('صيدلي','pharmacy'), 'amenity', 'pharmacy'),
-    (('مطعم','عشا','restaurant'), 'amenity', 'restaurant'),
-    (('فندق','hotel'), 'tourism', 'hotel'),
-    (('موبايل','mobile phone'), 'shop', 'mobile_phone'),
+    (("موتوسيكل", "موتوسكل", "سكوتر", "motorcycle", "scooter"), "shop", "motorcycle"),
+    (("سباك", "plumber"), "craft", "plumber"),
+    (("كهربائي", "electrician"), "craft", "electrician"),
+    (("نجار", "carpenter"), "craft", "carpenter"),
+    (("صيدلي", "pharmacy"), "amenity", "pharmacy"),
+    (("مطعم", "عشا", "restaurant"), "amenity", "restaurant"),
+    (("فندق", "hotel"), "tourism", "hotel"),
+    (("موبايل", "mobile phone"), "shop", "mobile_phone"),
 ]
 
+
 def category_for(text):
-    return next(((key, value) for words, key, value in CATEGORIES if any(w in text.lower() for w in words)), None)
+    low = text.lower()
+    return next(((key, value) for words, key, value in CATEGORIES if any(w in low for w in words)), None)
+
 
 def cached(key):
     with SessionLocal() as db:
@@ -32,84 +39,98 @@ def cached(key):
         if row and row.created_at > datetime.utcnow() - timedelta(hours=6):
             return json.loads(row.payload)
 
+
 def save(key, payload):
     with SessionLocal() as db:
         row = db.get(DiscoveryCache, key)
         if row:
-            row.payload = json.dumps(payload, ensure_ascii=False); row.created_at = datetime.utcnow()
+            row.payload = json.dumps(payload, ensure_ascii=False)
+            row.created_at = datetime.utcnow()
         else:
             db.add(DiscoveryCache(key=key, payload=json.dumps(payload, ensure_ascii=False)))
         db.commit()
+
 
 async def discover_businesses(text, area=None, locale_context: LocaleContext | str | None = None):
     global _last_call
     context = locale_context if isinstance(locale_context, LocaleContext) else resolve_locale(locale_context)
     category = category_for(text)
-    query = ' '.join(text.split())
+    query = " ".join(text.split())
     key = hashlib.sha256(json.dumps(
-        [category or query, area, context.locale, context.region], ensure_ascii=False
+        [DISCOVERY_CACHE_VERSION, category or query, area, context.locale, context.region],
+        ensure_ascii=False,
     ).encode()).hexdigest()
+
     async with _lock:
         hit = cached(key)
         if hit is not None:
             return hit
-        # Serialize the public geocoder, including fallback searches; cache reused results.
+
         await asyncio.sleep(max(0, 1.1 - (time.monotonic() - _last_call)))
         _last_call = time.monotonic()
+
         if not category or not area:
             result = await services.discover_businesses(query, area, context)
             if result:
                 save(key, result)
             return result
+
         if services.GOOGLE_KEY:
             try:
                 result = await services._google(services._query(query, area, context), context)
                 if result:
-                    save(key, result); return result
+                    save(key, result)
+                    return result
             except (httpx.HTTPError, ValueError):
                 pass
-        headers = {'User-Agent': 'Maak/1.0 (https://github.com/karim87nu-create/mehtag-eih)'}
+
+        headers = {"User-Agent": "Maak/1.0 supplier-discovery"}
         async with httpx.AsyncClient(timeout=20, headers=headers, follow_redirects=False) as client:
             geocode_params = {
-                'q': ', '.join(value for value in (area, context.search_country) if value),
-                'format': 'jsonv2',
-                'limit': 1,
-                'accept-language': context.language if context.language != 'mixed' else 'ar',
+                "q": ", ".join(value for value in (area, context.search_country) if value),
+                "format": "jsonv2",
+                "limit": 1,
+                "accept-language": context.language if context.language != "mixed" else "ar",
             }
             if context.country_code:
-                geocode_params['countrycodes'] = context.country_code
-            response = await client.get('https://nominatim.openstreetmap.org/search', params=geocode_params)
+                geocode_params["countrycodes"] = context.country_code
+
+            response = await client.get("https://nominatim.openstreetmap.org/search", params=geocode_params)
             response.raise_for_status()
             locations = response.json()
             if not locations:
                 return []
-            lat, lon = float(locations[0]['lat']), float(locations[0]['lon'])
-            tag, value = category
 
-            # Prefer the requested neighborhood. If that contains no tagged
-            # suppliers at all, widen once to a city-scale radius instead of
-            # falsely concluding that no supplier exists. We never widen when
-            # the local radius already produced leads.
+            lat, lon = float(locations[0]["lat"]), float(locations[0]["lon"])
+            tag, value = category
             result = []
+
+            # Prefer the requested neighborhood, then widen once only when no
+            # named local lead exists.
             for radius in (5000, 15000):
                 q = f'[out:json][timeout:15];nwr["{tag}"="{value}"](around:{radius},{lat},{lon});out center tags 15;'
-                response = await client.post('https://overpass-api.de/api/interpreter', data={'data': q})
+                response = await client.post("https://overpass-api.de/api/interpreter", data={"data": q})
                 response.raise_for_status()
                 result = []
-                for element in response.json().get('elements', []):
-                    tags = element.get('tags', {})
-                    localized_name = tags.get(f'name:{context.language}') if context.language != 'mixed' else None
-                    language_fallback = tags.get('name:ar') if context.language == 'ar' else tags.get('name:en')
-                    name = localized_name or tags.get('name') or language_fallback
+                for element in response.json().get("elements", []):
+                    tags = element.get("tags", {})
+                    localized_name = tags.get(f"name:{context.language}") if context.language != "mixed" else None
+                    language_fallback = tags.get("name:ar") if context.language == "ar" else tags.get("name:en")
+                    name = localized_name or tags.get("name") or language_fallback
                     if not name:
                         continue
-                    kind, oid = element['type'], element['id']
-                    result.append({'external_id': f'osm-{kind}-{oid}', 'name': name,
-                        'website': tags.get('contact:website') or tags.get('website'),
-                        'phone': tags.get('contact:phone') or tags.get('phone'),
-                        'source': f'https://www.openstreetmap.org/{kind}/{oid}',
-                        'address': tags.get('addr:full'), 'search_radius_m': radius})
+                    kind, oid = element["type"], element["id"]
+                    result.append({
+                        "external_id": f"osm-{kind}-{oid}",
+                        "name": name,
+                        "website": tags.get("contact:website") or tags.get("website"),
+                        "phone": tags.get("contact:phone") or tags.get("phone"),
+                        "source": f"https://www.openstreetmap.org/{kind}/{oid}",
+                        "address": tags.get("addr:full"),
+                        "search_radius_m": radius,
+                    })
                 if result:
                     break
+
             save(key, result)
             return result
