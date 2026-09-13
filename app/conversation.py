@@ -1616,10 +1616,12 @@ class LocalGGUFProvider(ConversationProvider):
         prompt = (
             "You route Arabic and English assistant messages by meaning, not keywords. "
             f"Allowed routes: {classes}. Return ONLY compact JSON with keys route, confidence, "
-            "fits_active_draft, execute_now. fits_active_draft is true only when the message is a "
+            "fits_active_draft, execute_now, response. fits_active_draft is true only when the message is a "
             "constraint on the live draft. A question, opinion request, comparison, hesitation, "
             "small talk, or information-only message never fits the draft. execute_now is true only "
-            "for an explicit request to act now; wanting or discussing something is not execution."
+            "for an explicit request to act now; wanting or discussing something is not execution. "
+            "response must be a short natural answer in the user's language for casual chat, advice, "
+            "comparison, or hesitation. Do not invent facts; say what information is needed when necessary."
         )
         history = _bounded_history(context.history)[-6:]
         payload = {
@@ -1636,7 +1638,7 @@ class LocalGGUFProvider(ConversationProvider):
                 temperature=0.0,
                 top_p=0.8,
                 repeat_penalty=1.05,
-                max_tokens=72,
+                max_tokens=128,
                 response_format={"type": "json_object"},
             )
         raw = _strip_model_artifacts(str(result["choices"][0]["message"]["content"] or ""))

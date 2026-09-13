@@ -229,10 +229,12 @@ class DraftAwareProvider:
         needs_semantic = not decision.deterministic or (
             bool(draft) and decision.route in {Route.REQUEST_DETAIL, Route.CASUAL_CHAT}
         )
+        semantic_payload = None
         if needs_semantic:
             classifier = getattr(self.wrapped, "classify_route", None)
             if classifier is not None:
-                semantic = semantic_decision(await classifier(context, draft))
+                semantic_payload = await classifier(context, draft)
+                semantic = semantic_decision(semantic_payload)
                 if semantic is not None and semantic.confidence >= 0.68:
                     decision = semantic
         setattr(context, "semantic_route_decision", decision)
@@ -244,7 +246,10 @@ class DraftAwareProvider:
         semantic_detail = (
             draft and route == Route.REQUEST_DETAIL and decision.fits_active_draft
         )
-        if draft and (_is_execute_control(current) or _is_cancel_control(current) or semantic_detail or _is_draft_detail(context)):
+        deterministic_detail = _is_draft_detail(context) and not (
+            needs_semantic and not decision.deterministic
+        )
+        if draft and (_is_execute_control(current) or _is_cancel_control(current) or semantic_detail or deterministic_detail):
             return _placeholder(Intent.NEW_REQUEST if _is_request_seed(current) else Intent.CONTINUATION)
         if _is_execute_control(current) and not draft:
             return _placeholder(Intent.CONTINUATION)
@@ -283,6 +288,22 @@ class DraftAwareProvider:
                 "فهمت الإجراء الخارجي المطلوب، لكن محتاج قناة موثقة ومصرح بها قبل أي إرسال فعلي.",
                 Intent.GENERAL_QUESTION, 1.0, ResponseStyle(),
                 ActionProposal(ActionType.NONE, False, 1.0), provider="router-fast-path", model=None, degraded=False,
+            )
+
+        # For open-ended advice/comparison turns, reuse the natural answer from
+        # the same semantic inference. This avoids a second model call and makes
+        # the route affect the answer, not just the request safety boundary.
+        semantic_response = _clean(str((semantic_payload or {}).get("response") or ""))
+        if (
+            semantic_response
+            and decision.confidence >= 0.68
+            and route in {Route.CASUAL_CHAT, Route.COMPARISON_RECOMMENDATION}
+        ):
+            return ProviderReply(
+                semantic_response, Intent.GENERAL_QUESTION, decision.confidence,
+                ResponseStyle(), ActionProposal(ActionType.NONE, False, 1.0),
+                provider="semantic-router", model=getattr(getattr(self.wrapped, "primary", None), "model", None),
+                degraded=False,
             )
 
         # The current web client cannot render internet image results yet. Say
