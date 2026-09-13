@@ -223,12 +223,26 @@ class DraftAwareProvider:
         draft = _draft_text(context)
         decision = route_turn(current, draft_exists=bool(draft))
 
+        # Product/model codes and numeric constraints are structured data, not
+        # prose intent. A tiny local model must not reinterpret e.g. "rkv250"
+        # as chat and erase an otherwise valid draft detail.
+        structured_detail = bool(
+            draft
+            and decision.route == Route.REQUEST_DETAIL
+            and (
+                any(ch.isdigit() for ch in current)
+                or (len(current.split()) == 1 and not current.endswith(("?", "؟")))
+            )
+        )
+
         # Deterministic recognition is reserved for clear controls and cheap,
         # high-certainty paths. Ambiguous language is classified semantically
         # using the live draft and recent conversation rather than a phrase list.
         needs_semantic = not decision.deterministic or (
             bool(draft) and decision.route in {Route.REQUEST_DETAIL, Route.CASUAL_CHAT}
         )
+        if structured_detail:
+            needs_semantic = False
         semantic_payload = None
         if needs_semantic:
             classifier = getattr(self.wrapped, "classify_route", None)
