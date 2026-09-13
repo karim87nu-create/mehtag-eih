@@ -10,4 +10,4 @@ ENV LOCAL_MODEL_PATH=/app/models/qwen3-1.7b-q3_k_m.gguf \
     LOCAL_MODEL_CONTEXT=1536 \
     LOCAL_MODEL_THREADS=2
 EXPOSE 8080
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "app.media_entrypoint:app", "--host", "0.0.0.0", "--port", "8080"]

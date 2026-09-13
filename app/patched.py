@@ -10,6 +10,7 @@ import re
 
 from . import main as main_module
 from .conversation import ActionProposal, ActionType, Intent, ProviderReply, ResponseStyle
+from .intent_router import Route, route_turn
 
 
 app = main_module.app
@@ -68,22 +69,19 @@ def _norm(value: str) -> str:
 
 
 def _is_request_seed(text: str) -> bool:
-    value = _clean(text)
-    return bool(_AR_REQUEST_START.search(value) or _EN_REQUEST_START.search(value))
+    return route_turn(text).route == Route.REQUEST_SEED
 
 
 def _is_execute_control(text: str) -> bool:
-    value = _norm(text)
-    return value in {_norm(item) for item in _CONTROL_EXECUTE}
+    return route_turn(text).route == Route.REQUEST_EXECUTE
 
 
 def _is_cancel_control(text: str) -> bool:
-    value = _norm(text)
-    return value in {_norm(item) for item in _CONTROL_CANCEL}
+    return route_turn(text).route == Route.REQUEST_CANCEL
 
 
 def _is_small_talk(text: str) -> bool:
-    return _norm(text) in {_norm(item) for item in _SMALL_TALK}
+    return route_turn(text).route == Route.CASUAL_CHAT and _norm(text) in {_norm(item) for item in _SMALL_TALK}
 
 
 def _is_attention_cue(text: str) -> bool:
@@ -91,14 +89,16 @@ def _is_attention_cue(text: str) -> bool:
 
 
 def _is_media_request(text: str) -> bool:
-    return bool(_MEDIA_REQUEST_RE.search(_clean(text)))
+    return route_turn(text).route == Route.MEDIA_IMAGE_REQUEST
 
 
 def _is_conversation_only_turn(text: str) -> bool:
     """Turns that must be answered, never silently turned into request details."""
     current = _clean(text)
     normalized = _norm(current)
-    if "?" in current or "؟" in current:
+    route = route_turn(current).route
+    if route in {Route.FACTUAL_QUESTION, Route.COMPARISON_RECOMMENDATION, Route.MEDIA_IMAGE_REQUEST,
+                 Route.REQUEST_STATUS_FOLLOWUP, Route.EXTERNAL_ACTION, Route.FUTURE_TASK}:
         return True
     if _is_attention_cue(current) or _is_media_request(current):
         return True
@@ -186,12 +186,7 @@ def _is_draft_detail(context) -> bool:
         or _is_conversation_only_turn(current)
     ):
         return False
-    # Request details are normally short: condition, budget, area, colour, size,
-    # etc. Conversational commands and questions were excluded above.
-    words = current.split()
-    if len(words) <= 8:
-        return True
-    return any(area in current for area in _AREAS) or _looks_like_budget(current)
+    return route_turn(current, draft_exists=True).route == Route.REQUEST_DETAIL
 
 
 def _draft_reply_text(context, draft: str, first: bool) -> str:
@@ -226,6 +221,7 @@ class DraftAwareProvider:
     async def respond(self, context):
         current = _clean(context.message)
         draft = _draft_text(context)
+        route = route_turn(current, draft_exists=bool(draft)).route
 
         # These paths are fully determined by the server policy below. Running a
         # 1.7B local model first only adds seconds of latency and cannot improve
@@ -248,6 +244,27 @@ class DraftAwareProvider:
                 provider="draft-fast-path",
                 model=None,
                 degraded=False,
+            )
+
+        if route == Route.REQUEST_STATUS_FOLLOWUP and not context.active_cases:
+            return ProviderReply(
+                "مفيش طلب مرتبط بالمحادثة دي لسه.", Intent.CONTINUATION, 1.0,
+                ResponseStyle(), ActionProposal(ActionType.NONE, False, 1.0),
+                provider="router-fast-path", model=None, degraded=False,
+            )
+
+        if route == Route.FUTURE_TASK:
+            return ProviderReply(
+                "أقدر أفهم المهمة، لكن جدولة التذكير لوقت لاحق لسه مش متوصلة هنا.",
+                Intent.GENERAL_QUESTION, 1.0, ResponseStyle(),
+                ActionProposal(ActionType.NONE, False, 1.0), provider="router-fast-path", model=None, degraded=False,
+            )
+
+        if route == Route.EXTERNAL_ACTION:
+            return ProviderReply(
+                "فهمت الإجراء الخارجي المطلوب، لكن محتاج قناة موثقة ومصرح بها قبل أي إرسال فعلي.",
+                Intent.GENERAL_QUESTION, 1.0, ResponseStyle(),
+                ActionProposal(ActionType.NONE, False, 1.0), provider="router-fast-path", model=None, degraded=False,
             )
 
         # The current web client cannot render internet image results yet. Say

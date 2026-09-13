@@ -1,0 +1,68 @@
+name: Live intent router smoke
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'app/intent_router.py'
+      - 'app/patched.py'
+      - 'app/media_entrypoint.py'
+      - 'Dockerfile'
+
+jobs:
+  router:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify conversational boundaries and request flow
+        run: |
+          python - <<'PY'
+          import json, time, uuid, urllib.parse, urllib.request
+
+          base = 'https://mehtag-eih-experience-production.up.railway.app'
+          customer = str(uuid.uuid4())
+
+          def chat(message, thread=None):
+              body = {'message': message, 'locale': 'ar-EG', 'client_turn_id': str(uuid.uuid4())}
+              if thread:
+                  body['thread_id'] = thread
+              req = urllib.request.Request(base + '/api/chat', data=json.dumps(body).encode(), method='POST', headers={
+                  'Content-Type': 'application/json', 'X-Customer-Ref': customer,
+              })
+              with urllib.request.urlopen(req, timeout=45) as response:
+                  return json.loads(response.read().decode())
+
+          # Wait until Railway is serving the router build, not merely a healthy
+          # previous deployment.
+          for _ in range(30):
+              try:
+                  probe = chat('فكرني بكرة بالموضوع')
+                  if 'جدولة التذكير' in probe['message']['content']:
+                      break
+              except Exception:
+                  pass
+              time.sleep(10)
+          else:
+              raise SystemExit('router deployment was not observed')
+
+          conversational = [
+              'ايه الفرق بين الجديد والمستعمل؟', 'رشحلي بين اتنين', 'هو ده كويس؟',
+              'انا متردد', 'عايز اعرف الاول مش اشتري', 'فين الطلب اللي عملناه',
+              'بص', 'شكرا', 'عايز صور rkv250',
+          ]
+          for message in conversational:
+              result = chat(message)
+              assert result['action']['status'] != 'EXECUTED', (message, result)
+              assert result.get('card') is None, (message, result)
+
+          first = chat('عايز موتوسيكل')
+          thread = first['thread_id']
+          for detail in ('rkv250', 'مستعمل', 'في مصر الجديدة'):
+              result = chat(detail, thread)
+              assert result['action']['status'] != 'EXECUTED', result
+              assert result.get('card') is None, result
+          executed = chat('ابدأ', thread)
+          assert executed['action']['type'] == 'CREATE_REQUEST', executed
+          assert executed['action']['status'] == 'EXECUTED', executed
+          assert executed.get('card'), executed
+          print('LIVE_ROUTER_SMOKE_PASS=1')
+          PY
