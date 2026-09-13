@@ -1,0 +1,28 @@
+name: Live media performance smoke
+
+on:
+  push:
+    paths:
+      - '.github/workflows/live-media-performance-smoke.yml'
+
+jobs:
+  media:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Measure image search
+        run: |
+          python - <<'PY'
+          import json,time,urllib.parse,urllib.request
+          base='https://mehtag-eih-experience-production.up.railway.app'
+          url=base+'/api/images?'+urllib.parse.urlencode({'query':'rkv250'})
+          started=time.monotonic()
+          with urllib.request.urlopen(url,timeout=20) as r:
+              data=json.loads(r.read().decode())
+          elapsed=time.monotonic()-started
+          print('IMAGE_SECONDS=',round(elapsed,3))
+          print('IMAGE_ITEMS=',len(data.get('items') or []))
+          print('IMAGE_SOURCE=',data.get('source'))
+          assert data.get('items'), data
+          assert elapsed < 8.0, elapsed
+          print('MEDIA_PERF_PASS=1')
+          PY
