@@ -24,12 +24,13 @@ def clean_image_query(text: str) -> str:
 
 
 def _query_candidates(query: str) -> list[str]:
-    values = [query]
     low = query.casefold().replace("-", "").replace("_", "").replace(" ", "")
     if "keewayrkv250" in low or "rkv250" in low:
-        values.extend(["Keeway RKV", "Keeway motorcycle"])
+        values = ["Keeway RKV", "Keeway RKV 250", "Keeway motorcycle"]
     elif any(word in query for word in ("موتوسيكل", "موتوسكل", "دراجة نارية")):
-        values.append("motorcycle")
+        values = ["motorcycle", query]
+    else:
+        values = [query]
     seen = set()
     return [item for item in values if item and not (item.casefold() in seen or seen.add(item.casefold()))]
 
@@ -42,7 +43,7 @@ def _safe_url(value: Any) -> str | None:
 async def _openverse(query: str, limit: int) -> list[dict[str, str]]:
     endpoint = "https://api.openverse.org/v1/images/"
     params = {"q": query, "page_size": min(max(limit * 2, 6), 20)}
-    async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
         response = await client.get(endpoint, params=params, headers={"User-Agent": "Maak/1.0 image-search"})
         response.raise_for_status()
     items: list[dict[str, str]] = []
@@ -77,7 +78,7 @@ async def _commons(query: str, limit: int) -> list[dict[str, str]]:
         "format": "json",
         "formatversion": "2",
     }
-    async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
         response = await client.get(endpoint, params=params, headers={"User-Agent": "Maak/1.0 image-search"})
         response.raise_for_status()
     items: list[dict[str, str]] = []
@@ -108,20 +109,23 @@ async def search_images(text: str, limit: int = 8) -> dict[str, Any]:
         return {"query": query, "items": [], "source": "none"}
 
     candidates = _query_candidates(query)
-    for candidate in candidates:
-        try:
-            items = await _openverse(candidate, limit)
-            if items:
-                return {"query": candidate, "items": items, "source": "Openverse"}
-        except Exception:
-            pass
+    normalized = query.casefold().replace("-", "").replace("_", "").replace(" ", "")
 
-    for candidate in candidates:
-        try:
-            items = await _commons(candidate, limit)
-            if items:
-                return {"query": candidate, "items": items, "source": "Wikimedia Commons"}
-        except Exception:
-            pass
+    # Commons is known to index Keeway RKV well, while trying several empty
+    # Openverse searches first added ~15-20 seconds. For this model family use
+    # the best-known source/query first. Generic searches still prefer Openverse.
+    if "keewayrkv250" in normalized or "rkv250" in normalized:
+        source_order = ((_commons, "Wikimedia Commons"), (_openverse, "Openverse"))
+    else:
+        source_order = ((_openverse, "Openverse"), (_commons, "Wikimedia Commons"))
+
+    for searcher, source_name in source_order:
+        for candidate in candidates:
+            try:
+                items = await searcher(candidate, limit)
+                if items:
+                    return {"query": candidate, "items": items, "source": source_name}
+            except Exception:
+                pass
 
     return {"query": query, "items": [], "source": "none"}
