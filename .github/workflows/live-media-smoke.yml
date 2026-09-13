@@ -1,0 +1,72 @@
+name: Live media smoke
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/live-media-smoke.yml'
+
+jobs:
+  media:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify live image search and chat classification
+        env:
+          BASE_URL: https://mehtag-eih-experience-production.up.railway.app
+        run: |
+          python - <<'PY'
+          import json, time, uuid, urllib.parse, urllib.request, urllib.error
+
+          base = 'https://mehtag-eih-experience-production.up.railway.app'
+
+          def get_json(url, headers=None):
+              req = urllib.request.Request(url, headers=headers or {})
+              with urllib.request.urlopen(req, timeout=20) as r:
+                  return r.status, json.loads(r.read().decode())
+
+          # Wait for the deployment carrying the media endpoint/behavior.
+          last = None
+          for _ in range(24):
+              try:
+                  status, data = get_json(base + '/api/images?' + urllib.parse.urlencode({'query':'rkv250'}))
+                  if status == 200 and isinstance(data.get('items'), list) and data.get('items'):
+                      print('IMAGE_ITEMS=', len(data['items']))
+                      print('IMAGE_SOURCE=', data.get('source'))
+                      break
+                  last = data
+              except Exception as exc:
+                  last = repr(exc)
+              time.sleep(5)
+          else:
+              raise SystemExit(f'image endpoint did not return items: {last!r}')
+
+          customer = str(uuid.uuid4())
+          turn = str(uuid.uuid4())
+          payload = json.dumps({
+              'message':'عايز صور الموتوسيكل rkv250',
+              'locale':'ar-EG',
+              'client_turn_id':turn,
+          }).encode()
+          req = urllib.request.Request(
+              base + '/api/chat', data=payload, method='POST',
+              headers={
+                  'Content-Type':'application/json',
+                  'Accept':'application/json',
+                  'X-Customer-Ref':customer,
+              }
+          )
+          with urllib.request.urlopen(req, timeout=30) as r:
+              body = json.loads(r.read().decode())
+          text = ((body.get('message') or {}).get('content') or '')
+          action = body.get('action') or {}
+          print('CHAT_REPLY=', text)
+          print('ACTION=', action)
+          if action.get('status') == 'EXECUTED' or action.get('type') not in (None, 'NONE'):
+              raise SystemExit('media request executed a business action')
+          bad = ('كمّل المواصفات', 'لسه مش متوصل', 'ضفت «صور»')
+          if any(x in text for x in bad):
+              raise SystemExit('stale media classification/reply is still live')
+          if 'الصور' not in text:
+              raise SystemExit('chat did not acknowledge media request naturally')
+          print('MEDIA_SMOKE_PASS=1')
+          PY
