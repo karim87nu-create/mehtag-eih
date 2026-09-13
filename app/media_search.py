@@ -19,8 +19,19 @@ def clean_image_query(text: str) -> str:
     value = " ".join(value.split()).strip("-–—:،,. ")
     low = value.casefold().replace("-", "").replace("_", "").replace(" ", "")
     if "rkv250" in low:
-        return "Keeway RKV 250 motorcycle"
+        return "Keeway RKV 250"
     return value[:120]
+
+
+def _query_candidates(query: str) -> list[str]:
+    values = [query]
+    low = query.casefold().replace("-", "").replace("_", "").replace(" ", "")
+    if "keewayrkv250" in low or "rkv250" in low:
+        values.extend(["Keeway RKV", "Keeway motorcycle"])
+    elif any(word in query for word in ("موتوسيكل", "موتوسكل", "دراجة نارية")):
+        values.append("motorcycle")
+    seen = set()
+    return [item for item in values if item and not (item.casefold() in seen or seen.add(item.casefold()))]
 
 
 def _safe_url(value: Any) -> str | None:
@@ -96,15 +107,21 @@ async def search_images(text: str, limit: int = 8) -> dict[str, Any]:
     if len(query) < 2:
         return {"query": query, "items": [], "source": "none"}
 
-    try:
-        items = await _openverse(query, limit)
-        if items:
-            return {"query": query, "items": items, "source": "Openverse"}
-    except Exception:
-        pass
+    candidates = _query_candidates(query)
+    for candidate in candidates:
+        try:
+            items = await _openverse(candidate, limit)
+            if items:
+                return {"query": candidate, "items": items, "source": "Openverse"}
+        except Exception:
+            pass
 
-    try:
-        items = await _commons(query, limit)
-        return {"query": query, "items": items, "source": "Wikimedia Commons" if items else "none"}
-    except Exception:
-        return {"query": query, "items": [], "source": "none"}
+    for candidate in candidates:
+        try:
+            items = await _commons(candidate, limit)
+            if items:
+                return {"query": candidate, "items": items, "source": "Wikimedia Commons"}
+        except Exception:
+            pass
+
+    return {"query": query, "items": [], "source": "none"}
