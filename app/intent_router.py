@@ -13,6 +13,9 @@ import re
 import unicodedata
 
 
+ROUTER_VERSION = "2026-09-13.1"
+
+
 class Route(str, Enum):
     CASUAL_CHAT = "casual_chat"
     FACTUAL_QUESTION = "factual_question"
