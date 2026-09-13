@@ -50,5 +50,7 @@ jobs:
           print('MOTORCYCLE_LEADS='+str(len(motorcycle_leads)))
           assert (pharmacy.get('action') or {}).get('status')=='EXECUTED', pharmacy
           assert (motorcycle.get('action') or {}).get('status')=='EXECUTED', motorcycle
-          print('DISCOVERY_SMOKE_DONE=1')
+          assert len(pharmacy_leads) >= 1, pharmacy_leads
+          assert len(motorcycle_leads) >= 1, motorcycle_leads
+          print('DISCOVERY_SMOKE_PASS=1')
           PY
