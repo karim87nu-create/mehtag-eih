@@ -4,6 +4,7 @@ from dataclasses import replace
 import re
 
 from . import patched as patched_module
+from . import conversation as conversation_module
 from .brain import build_brain
 from .conversation import ActionProposal, ActionType, Intent, ProviderReply, ResponseStyle
 from .intent_router import Route, route_turn
@@ -11,10 +12,15 @@ from .media_search import search_images
 
 app = patched_module.app
 
-# The rest of MAAK now talks to one stable brain boundary. During migration the
-# builder can still use the existing provider, while a self-hosted MAAK Brain can
-# later be selected only by configuration (MAAK_BRAIN_URL) without touching the
-# conversation/request/execution code.
+_CONTEXT_FIRST_POLICY = """Treat every message as part of the ongoing conversation, not as an incomplete form field. Brevity or an unfinished-sounding phrase is not by itself a reason to ask the user to continue. Use recent conversation to answer or continue directly whenever reasonably possible. Ask only when one concrete missing fact genuinely blocks an accurate answer or the requested action, and ask specifically for that fact. Do not use generic continuation prompts as a fallback."""
+conversation_module.SYSTEM_PROMPT += "\n\n" + _CONTEXT_FIRST_POLICY
+_original_local_system_prompt = conversation_module._local_system_prompt
+
+def _context_first_local_system_prompt(*args, **kwargs):
+    return _original_local_system_prompt(*args, **kwargs) + "\n" + _CONTEXT_FIRST_POLICY
+
+conversation_module._local_system_prompt = _context_first_local_system_prompt
+
 _brain = build_brain(patched_module.main_module.conversation_provider)
 _draft = patched_module.DraftAwareProvider(_brain)
 patched_module._provider = _draft
@@ -51,7 +57,10 @@ class DynamicConversationProvider:
         context = _fresh_context(context)
         if _is_media_request(context.message):
             return ProviderReply("تمام، بجيبلك الصور المناسبة دلوقتي.", Intent.GENERAL_QUESTION, 1.0, ResponseStyle(), ActionProposal(ActionType.NONE, False, 1.0), provider=self.name, model=None, degraded=False)
-        return await self.wrapped.respond(context)
+        reply = await self.wrapped.respond(context)
+        if patched_module._clean(str(reply.text or "")) in {"قولّي أكتر.", "قولي أكتر.", "Tell me more."}:
+            reply.text = "هتعامل مع رسالتك كجزء من الكلام اللي قبلها، ومش هطلب منك تفاصيل إلا لو في معلومة محددة فعلًا لازمة للرد أو التنفيذ."
+        return reply
 
 _dynamic_provider = DynamicConversationProvider(patched_module.main_module.conversation_provider)
 patched_module.main_module.conversation_provider = _dynamic_provider
@@ -60,7 +69,7 @@ def _dynamic_draft_reply(context, draft: str, first: bool) -> str:
     semantic_response = patched_module._clean(str(getattr(context, "semantic_response", "") or ""))
     if semantic_response:
         return semantic_response
-    return "تمام، فهمت اللي محتاجه. قولّي التفصيلة الأهم بالنسبة لك، ولما يبقى الطلب واضح نبدأ."
+    return "الطلب لسه عندي زي ما هو. مش هفترض إنك محتاج تزود تفاصيل؛ لو في معلومة محددة لازمة عشان نكمل هطلبها بالاسم."
 
 patched_module._draft_reply_text = _dynamic_draft_reply
 

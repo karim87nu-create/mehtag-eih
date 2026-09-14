@@ -9,7 +9,6 @@ from .conversation import (
     ActionProposal,
     ActionType,
     ConversationProvider,
-    FallbackProvider,
     Intent,
     ProviderReply,
     ResilientProvider,
@@ -153,8 +152,13 @@ def build_brain(existing_provider: ConversationProvider) -> MaakBrain:
 
     Priority:
     1. Self-hosted MAAK Brain when MAAK_BRAIN_URL is configured.
-    2. Existing configured Gemini path during the migration period.
+    2. Configured Gemini path during the migration period.
     3. Existing local/default provider already built by the application.
+
+    When a remote provider is unavailable, fall back to the existing contextual
+    provider instead of the canned deterministic fallback. This preserves the
+    conversation history and avoids generic "tell me more" replies during an
+    upstream outage.
     """
 
     timeout = float(os.getenv("CONVERSATION_TIMEOUT_SECONDS", "20"))
@@ -165,12 +169,12 @@ def build_brain(existing_provider: ConversationProvider) -> MaakBrain:
             token=os.getenv("MAAK_BRAIN_TOKEN"),
             timeout=timeout,
         )
-        resilient = ResilientProvider(remote, FallbackProvider(), timeout_seconds=timeout)
+        resilient = ResilientProvider(remote, existing_provider, timeout_seconds=timeout)
         return MaakBrain(resilient, "self-hosted")
 
     gemini = build_gemini_provider()
     if gemini is not None:
-        resilient = ResilientProvider(gemini, FallbackProvider(), timeout_seconds=timeout)
+        resilient = ResilientProvider(gemini, existing_provider, timeout_seconds=timeout)
         return MaakBrain(resilient, "migration-gemini")
 
     return MaakBrain(existing_provider, "local-default")
