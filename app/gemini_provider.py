@@ -8,9 +8,11 @@ from typing import Any
 
 import httpx
 
-from .conversation import ActionProposal, ActionType, ConversationProvider, Intent, ProviderReply, ResponseStyle, SYSTEM_PROMPT
+from . import conversation as conversation_module
+from .conversation import ActionProposal, ActionType, ConversationProvider, Intent, ProviderReply, ResponseStyle
 
 logger = logging.getLogger("maak.gemini")
+
 
 class GeminiProvider(ConversationProvider):
     name = "gemini"
@@ -23,11 +25,21 @@ class GeminiProvider(ConversationProvider):
 
     @staticmethod
     def _inline_part(attachment: dict[str, str]) -> dict[str, Any] | None:
+        name = str(attachment.get("name") or "attachment")
+        mime_type = str(attachment.get("mime_type") or "application/octet-stream")
+        excerpt = str(attachment.get("text_excerpt") or "").strip()
+        if excerpt and not (mime_type.startswith("image/") or mime_type == "application/pdf"):
+            return {"text": f"Attachment {name} — extracted contents:\n{excerpt}"}
+        if mime_type in {
+            "text/plain", "text/csv", "application/json",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }:
+            return {"text": f"Attachment {name} was received, but no readable text could be extracted."}
         data_url = str(attachment.get("data_url") or "")
         if not data_url.startswith("data:") or "," not in data_url:
             return None
         header, encoded = data_url.split(",", 1)
-        mime_type = str(attachment.get("mime_type") or "application/octet-stream")
         if ";base64" not in header:
             encoded = base64.b64encode(encoded.encode()).decode()
         return {"inline_data": {"mime_type": mime_type, "data": encoded}}
@@ -56,22 +68,21 @@ route must be one of: casual_chat, factual_question, comparison_recommendation, 
 request_seed: a genuine request for MAAK to pursue/find/arrange/get/solve something. A feeling, preference, joke, objection or ordinary desire is not automatically a request.
 request_detail: only when this turn truly answers, constrains or corrects the active request. Short text, numbers, places and product words are NOT details merely because a draft exists. fits_active_draft must be true only when meaning and context establish the connection.
 request_execute: only explicit permission to start. request_cancel: explicit cancellation.
+A report/file/spreadsheet/document turn is a file conversation, not a request-status turn. A phrase like 'فين التقرير' refers to the report context unless the user explicitly says they mean an order/request status.
 response is the actual user-facing reply for this turn. If a real request is being formed, do not ask for more merely because it could be useful. Ask at most ONE specific question only when a concrete fact is genuinely needed to move forward; otherwise answer or continue naturally from context. If enough is known, naturally say it is ready and invite the user to start. If the turn is side conversation, answer it normally without pretending it changed the request. Use warm natural Egyptian Arabic, concise and non-form-like. Never invent facts or execution."""
-        payload={"message":context.message,"recent_history":context.history[-10:],"active_request_draft":draft,"active_cases":context.active_cases,"locale":context.locale}
+        payload={"message":context.message,"recent_history":context.history[-10:],"active_request_draft":draft,"active_cases":context.active_cases,"locale":context.locale,"attachments":[{"name":x.get("name"),"mime_type":x.get("mime_type")} for x in context.attachments[:3]]}
         data = await self._generate_json(system,[{"text":json.dumps(payload,ensure_ascii=False)}],500)
-        # Preserve the semantic reply on the same TurnContext so the safety
-        # policy can use this exact inference without a second model call.
         setattr(context, "semantic_response", str(data.get("response") or "").strip())
         setattr(context, "semantic_payload", data)
         return data
 
     async def respond(self, context) -> ProviderReply:
-        context_payload={"message":context.message,"history":context.history[-12:],"locale":context.locale,"active_cases":context.active_cases}
+        context_payload={"message":context.message,"history":context.history[-12:],"locale":context.locale,"active_cases":context.active_cases,"attachments":[{"name":x.get("name"),"mime_type":x.get("mime_type")} for x in context.attachments[:3]]}
         parts=[{"text":json.dumps(context_payload,ensure_ascii=False)}]
         for attachment in context.attachments[:3]:
             part=self._inline_part(attachment)
             if part: parts.append(part)
-        data=await self._generate_json(SYSTEM_PROMPT,parts)
+        data=await self._generate_json(conversation_module.SYSTEM_PROMPT,parts)
         style_data=data.get("style") or {}
         style=ResponseStyle(language=str(style_data.get("language") or "ar"),dialect=str(style_data.get("dialect") or "egyptian"),tone=str(style_data.get("tone") or "warm"),mood=str(style_data.get("mood") or "neutral"),urgency=str(style_data.get("urgency") or "normal"),formality=str(style_data.get("formality") or "casual"))
         proposed=data.get("action") or {}
@@ -81,6 +92,7 @@ response is the actual user-facing reply for this turn. If a real request is bei
         try: intent=Intent(str(data.get("intent") or "GENERAL_QUESTION"))
         except ValueError: intent=Intent.GENERAL_QUESTION
         return ProviderReply(str(data.get("response") or "").strip(),intent,float(data.get("confidence") or .5),style,action,self.name,self.model,False)
+
 
 def build_gemini_provider() -> ConversationProvider | None:
     provider=os.getenv("LLM_PROVIDER","").strip().casefold()
