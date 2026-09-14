@@ -10,8 +10,10 @@ from sqlalchemy.exc import IntegrityError
 from .db import SessionLocal
 from .models import (Business, Request, ReachAttempt, MerchantLink, TransportDelivery,
                      ConversationThread, ConversationCaseLink, ConversationMessage, Offer, Event)
-from .execution_models import VerifiedChannel, OutboundJob, ExecutionNotice
+from .execution_models import (VerifiedChannel, OutboundJob, ExecutionNotice,
+                               WhatsAppChannel, WhatsAppOutbound)
 from .execution_transport import post_verified, TransportRejected
+from .whatsapp_transport import send_template, WhatsAppRejected
 from .locale import resolve_locale
 from .ownership import canonical_customer_ref
 
@@ -110,10 +112,12 @@ def route_request_to_business(db, req, biz):
     if existing:
         return existing
     channel = db.query(VerifiedChannel).filter_by(business_id=biz.id, status='VERIFIED').first()
+    whatsapp = db.query(WhatsAppChannel).filter_by(business_id=biz.id, status='VERIFIED').first()
     attempt = ReachAttempt(request_id=req.id, business_id=biz.id,
-        channel='WEBHOOK' if channel else 'NONE', endpoint=channel.endpoint if channel else None,
-        status='PENDING' if channel else 'SKIPPED',
-        reason='verified channel; not sent' if channel else 'no verified delivery channel')
+        channel='WEBHOOK' if channel else ('WHATSAPP' if whatsapp else 'NONE'),
+        endpoint=channel.endpoint if channel else (whatsapp.recipient if whatsapp else None),
+        status='PENDING' if channel or whatsapp else 'SKIPPED',
+        reason='verified channel; not sent' if channel or whatsapp else 'no verified delivery channel')
     db.add(attempt); db.commit(); db.refresh(attempt)
     return attempt
 
@@ -122,6 +126,9 @@ def deliver_request(db, attempt):
     existing = db.query(OutboundJob).filter_by(request_id=attempt.request_id, business_id=attempt.business_id).first()
     if existing:
         return db.get(TransportDelivery, existing.delivery_id)
+    existing_whatsapp = db.query(WhatsAppOutbound).filter_by(request_id=attempt.request_id, business_id=attempt.business_id).first()
+    if existing_whatsapp:
+        return db.get(TransportDelivery, existing_whatsapp.delivery_id)
     req = db.get(Request, attempt.request_id)
     if not req or not canonical_customer_ref(getattr(req, 'customer_ref', None)):
         delivery = TransportDelivery(
@@ -132,26 +139,35 @@ def deliver_request(db, attempt):
         db.add(delivery); db.commit(); db.refresh(delivery)
         return delivery
     channel = db.query(VerifiedChannel).filter_by(business_id=attempt.business_id, status='VERIFIED').first()
-    delivery = TransportDelivery(reach_attempt_id=attempt.id, transport='WEBHOOK' if channel else 'NONE',
-                                 status='QUEUED' if channel else 'FAILED',
-                                 error=None if channel else 'NO_VERIFIED_CHANNEL')
+    whatsapp = db.query(WhatsAppChannel).filter_by(business_id=attempt.business_id, status='VERIFIED').first()
+    delivery = TransportDelivery(reach_attempt_id=attempt.id,
+                                 transport='WEBHOOK' if channel else ('WHATSAPP' if whatsapp else 'NONE'),
+                                 status='QUEUED' if channel or whatsapp else 'FAILED',
+                                 error=None if channel or whatsapp else 'NO_VERIFIED_CHANNEL')
     db.add(delivery); db.flush()
-    if not channel:
+    if not channel and not whatsapp:
         attempt.status='SKIPPED'; db.commit(); return delivery
     link = db.query(MerchantLink).filter_by(request_id=attempt.request_id, business_id=attempt.business_id).first()
     if not link:
         db.add(MerchantLink(token=uuid.uuid4().hex + uuid.uuid4().hex,
                            request_id=attempt.request_id, business_id=attempt.business_id))
-    job = OutboundJob(request_id=attempt.request_id, business_id=attempt.business_id,
-                     attempt_id=attempt.id, delivery_id=delivery.id, channel_id=channel.id,
-                     endpoint=channel.endpoint, idempotency_key=uuid.uuid4().hex)
+    use_whatsapp = whatsapp is not None and channel is None
+    if use_whatsapp:
+        job = WhatsAppOutbound(request_id=attempt.request_id, business_id=attempt.business_id,
+                     attempt_id=attempt.id, delivery_id=delivery.id, channel_id=whatsapp.id,
+                     idempotency_key=uuid.uuid4().hex)
+    else:
+        job = OutboundJob(request_id=attempt.request_id, business_id=attempt.business_id,
+                         attempt_id=attempt.id, delivery_id=delivery.id, channel_id=channel.id,
+                         endpoint=channel.endpoint, idempotency_key=uuid.uuid4().hex)
     db.add(job)
     attempt.status = 'PENDING'; attempt.reason = 'queued; not sent'
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
-        existing = db.query(OutboundJob).filter_by(request_id=attempt.request_id, business_id=attempt.business_id).one()
+        model = WhatsAppOutbound if use_whatsapp else OutboundJob
+        existing = db.query(model).filter_by(request_id=attempt.request_id, business_id=attempt.business_id).one()
         return db.get(TransportDelivery, existing.delivery_id)
     return delivery
 
@@ -193,6 +209,16 @@ def refresh_notices(db):
             elif job.status in ('UNCERTAIN', 'FAILED', 'BLOCKED'):
                 publish(db, req.id, f'outbound:{job.id}:{job.status}',
                         f'لم يتأكد إرسال طلبك إلى {biz.name}. مش هاعتبره تواصل تم، ومش هكرر الإرسال تلقائيًا.')
+        for job in db.query(WhatsAppOutbound).filter_by(request_id=req.id).all():
+            biz = db.get(Business, job.business_id)
+            if job.status == 'ACKNOWLEDGED':
+                publish(db, req.id, f'wa-ack:{job.id}', f'{biz.name} رد على الرسالة؛ التواصل مؤكد وبنستنى تفاصيل العرض.')
+            elif job.status in ('PROVIDER_ACCEPTED','DELIVERED'):
+                publish(db, req.id, f'wa-pending:{job.id}:{job.status}',
+                        f'تم تمرير الرسالة عبر واتساب إلى {biz.name}، لكن المورد لم يؤكدها بعد؛ مش هاعتبرها تواصل تم.')
+            elif job.status in ('UNCERTAIN','FAILED','BLOCKED'):
+                publish(db, req.id, f'wa-failed:{job.id}:{job.status}',
+                        f'لم يتأكد وصول الرسالة إلى {biz.name}، ومش هكرر الإرسال تلقائيًا.')
         for offer in db.query(Offer).filter_by(request_id=req.id).all():
             biz = db.get(Business, offer.business_id)
             digest = hashlib.sha256(json.dumps([offer.price, offer.eta, offer.notes, offer.status], ensure_ascii=False).encode()).hexdigest()[:24]
@@ -255,6 +281,36 @@ def dispatch_one(job_id):
         db.commit()
         refresh_notices(db)
 
+def dispatch_whatsapp_one(job_id):
+    with SessionLocal() as db:
+        changed=db.query(WhatsAppOutbound).filter_by(id=job_id,status='QUEUED').update(
+            {'status':'SENDING'},synchronize_session=False)
+        db.commit()
+        if not changed: return
+        job=db.get(WhatsAppOutbound,job_id); channel=db.get(WhatsAppChannel,job.channel_id)
+        req=db.get(Request,job.request_id); attempt=db.get(ReachAttempt,job.attempt_id)
+        delivery=db.get(TransportDelivery,job.delivery_id)
+        link=db.query(MerchantLink).filter_by(request_id=req.id,business_id=job.business_id).first()
+        if (not channel or channel.status!='VERIFIED' or not link or
+                not base_url().startswith('https://') or
+                not canonical_customer_ref(getattr(req,'customer_ref',None)) or
+                req.status not in ('DISCOVERING','SUPPLY_FOUND_NO_CHANNEL','WAITING_OFFERS','NO_REACHABLE_SUPPLY') or
+                datetime.utcnow()>link.created_at+timedelta(hours=24)):
+            job.status='BLOCKED'; job.error='CHANNEL_REQUEST_OR_CALLBACK_UNAVAILABLE'
+        else:
+            try:
+                job.provider_ref=send_template(channel.recipient,req.id,req.item,req.area,
+                                               f'{base_url()}/r/{link.token}')
+                job.status='PROVIDER_ACCEPTED'; job.sent_at=datetime.utcnow()
+            except WhatsAppRejected as exc:
+                job.status='UNCERTAIN'; job.error=str(exc)
+            except Exception as exc:
+                job.status='UNCERTAIN'; job.error=type(exc).__name__
+        delivery.status=job.status; delivery.error=job.error; delivery.provider_ref=job.provider_ref
+        attempt.status=job.status; attempt.reason=job.error or 'provider accepted; supplier has not acknowledged'
+        db.add(Event(request_id=req.id,event_type=f'WHATSAPP_{job.status}',detail=f'job={job.id}'))
+        db.commit(); refresh_notices(db)
+
 
 def recover_interrupted():
     with SessionLocal() as db:
@@ -266,6 +322,11 @@ def recover_interrupted():
                 delivery.status='UNCERTAIN'; delivery.error='WORKER_INTERRUPTED'
             if attempt:
                 attempt.status='UNCERTAIN'; attempt.reason='WORKER_INTERRUPTED'
+        for job in db.query(WhatsAppOutbound).filter_by(status='SENDING').all():
+            job.status='UNCERTAIN'; job.error='WORKER_INTERRUPTED'
+            delivery=db.get(TransportDelivery,job.delivery_id); attempt=db.get(ReachAttempt,job.attempt_id)
+            if delivery: delivery.status='UNCERTAIN'; delivery.error=job.error
+            if attempt: attempt.status='UNCERTAIN'; attempt.reason=job.error
         db.commit()
 
 
@@ -274,5 +335,9 @@ def worker_tick():
         ids = [j.id for j in db.query(OutboundJob).filter_by(status='QUEUED').order_by(OutboundJob.id).limit(5)]
     for job_id in ids:
         dispatch_one(job_id)
+    with SessionLocal() as db:
+        whatsapp_ids=[j.id for j in db.query(WhatsAppOutbound).filter_by(status='QUEUED').order_by(WhatsAppOutbound.id).limit(5)]
+    for job_id in whatsapp_ids:
+        dispatch_whatsapp_one(job_id)
     with SessionLocal() as db:
         refresh_notices(db)

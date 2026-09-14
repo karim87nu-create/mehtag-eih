@@ -99,6 +99,43 @@ conversation boundary, not full account authentication. This layer preserves it.
 Production authentication and protection of the broader legacy admin/read pages
 remain separate work. Secrets in verified_channels require protected DB access.
 
+## Real supplier WhatsApp channel
+
+The application now has a direct Meta WhatsApp Cloud API adapter. It is disabled
+until all `MAAK_WHATSAPP_*` variables in `.env.example` are configured and the
+message template is approved. The approved template must have four body variables,
+in order: request ID, item, area, and the 24-hour merchant reply URL.
+
+Configure Meta's webhook callback as:
+`https://<BASE_URL>/api/execution/whatsapp/webhook`. Use
+`MAAK_WHATSAPP_VERIFY_TOKEN` as the verification token and subscribe to message
+and message-status events. Incoming webhook bodies are accepted only with a valid
+`X-Hub-Signature-256` generated using `MAAK_WHATSAPP_APP_SECRET`.
+
+An authenticated operator records the supplier's explicit opt-in:
+
+```http
+POST /api/execution/admin/whatsapp-channels
+Authorization: Bearer <MAAK_EXECUTION_ADMIN_TOKEN>
+Content-Type: application/json
+
+{"business_id":123,"recipient":"201000000000","consent_basis":"...actual supplier authorization..."}
+```
+
+The state model is deliberately strict:
+
+- `PROVIDER_ACCEPTED`: Meta returned a `wamid`; this is not supplier contact.
+- `DELIVERED`: WhatsApp reported delivery; this is still not a human ACK.
+- `ACKNOWLEDGED`: that same supplier number replied with a context reference to
+  the exact outbound `wamid`; only here may the product say contact is confirmed.
+- `UNCERTAIN`: timeout, malformed provider response, or failed delivery. It is not
+  retried automatically because the provider may already have accepted the send.
+
+Arbitrary inbound messages, replies from another number, unsigned callbacks, and
+statuses for unknown `wamid` values cannot advance a request. Template replies may
+acknowledge contact, while a priced offer is still recorded through the existing
+signed offer/reply flow and validation rules.
+
 OSM references: https://operations.osmfoundation.org/policies/nominatim/
 https://wiki.openstreetmap.org/wiki/Overpass_API/Overpass_QL
 https://wiki.openstreetmap.org/wiki/Tag:shop%3Dmotorcycle

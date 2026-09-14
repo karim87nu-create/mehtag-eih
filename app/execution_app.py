@@ -20,10 +20,12 @@ from sqlalchemy.exc import IntegrityError
 from . import main as core
 from .db import Base, engine
 from .models import Business, Request, Offer, MerchantLink, ReachAttempt, ConversationThread, ConversationCaseLink
-from .execution_models import VerifiedChannel, OutboundJob, ExecutionNotice, IncomingReceipt
+from .execution_models import (VerifiedChannel, OutboundJob, ExecutionNotice, IncomingReceipt,
+                               WhatsAppChannel, WhatsAppOutbound)
 from . import execution
 from .execution_discovery import discover_businesses as search_businesses
 from .execution_transport import post_verified, signature, TransportRejected
+from .whatsapp_transport import normalize_phone, verify_webhook_signature, parse_events
 
 Base.metadata.create_all(bind=engine)
 app = core.app
@@ -176,6 +178,34 @@ class QueueInput(BaseModel):
     request_id: int
     business_id: int
 
+class WhatsAppChannelInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    business_id: int
+    recipient: str = Field(min_length=8,max_length=32)
+    consent_basis: str = Field(min_length=10,max_length=2000)
+
+@app.post('/api/execution/admin/whatsapp-channels')
+def register_whatsapp_channel(payload:WhatsAppChannelInput, db=Depends(core.get_db)):
+    if not db.get(Business,payload.business_id): raise HTTPException(404,'Business not found')
+    if db.query(WhatsAppChannel).filter_by(business_id=payload.business_id).first():
+        raise HTTPException(409,'WhatsApp channel already registered')
+    try: recipient=normalize_phone(payload.recipient)
+    except ValueError: raise HTTPException(422,'Invalid WhatsApp E.164 recipient')
+    row=WhatsAppChannel(business_id=payload.business_id,recipient=recipient,
+                        consent_basis=payload.consent_basis)
+    db.add(row)
+    try: db.commit()
+    except IntegrityError:
+        db.rollback(); raise HTTPException(409,'WhatsApp channel already registered')
+    return {'id':row.id,'status':row.status,'business_id':row.business_id,
+            'recipient_suffix':recipient[-4:]}
+
+@app.post('/api/execution/admin/whatsapp-channels/{channel_id}/revoke')
+def revoke_whatsapp_channel(channel_id:int, db=Depends(core.get_db)):
+    row=db.get(WhatsAppChannel,channel_id)
+    if not row: raise HTTPException(404,'Channel not found')
+    row.status='REVOKED'; db.commit(); return {'status':row.status}
+
 @app.post('/api/execution/admin/queue')
 def queue_existing(payload:QueueInput, db=Depends(core.get_db)):
     req=db.get(Request,payload.request_id); biz=db.get(Business,payload.business_id)
@@ -254,10 +284,61 @@ async def receive_offer(channel_id:int, request:HTTPRequest, db=Depends(core.get
 def execution_health(db=Depends(core.get_db)):
     worker = execution.worker_health()
     payload = {'version':'execution-v1','persistent_database':str(engine.url.database or '').startswith('/data/'),'verified_channels':db.query(VerifiedChannel).filter_by(status='VERIFIED').count(),
-               'queued':db.query(OutboundJob).filter_by(status='QUEUED').count(),
-               'uncertain':db.query(OutboundJob).filter_by(status='UNCERTAIN').count(),
+               'verified_whatsapp_channels':db.query(WhatsAppChannel).filter_by(status='VERIFIED').count(),
+               'queued':db.query(OutboundJob).filter_by(status='QUEUED').count()+db.query(WhatsAppOutbound).filter_by(status='QUEUED').count(),
+               'uncertain':db.query(OutboundJob).filter_by(status='UNCERTAIN').count()+db.query(WhatsAppOutbound).filter_by(status='UNCERTAIN').count(),
                'provider':core.conversation_provider.name,'degraded':core.conversation_provider.degraded,
                'worker':worker}
     if not worker['healthy']:
         return JSONResponse(payload, status_code=503)
     return payload
+
+@app.get('/api/execution/whatsapp/webhook')
+def verify_whatsapp_webhook(request:HTTPRequest):
+    mode=request.query_params.get('hub.mode'); token=request.query_params.get('hub.verify_token')
+    challenge=request.query_params.get('hub.challenge')
+    if mode!='subscribe' or not os.getenv('MAAK_WHATSAPP_VERIFY_TOKEN') or not hmac.compare_digest(token or '',os.environ['MAAK_WHATSAPP_VERIFY_TOKEN']):
+        raise HTTPException(403,'Webhook verification failed')
+    return HTMLResponse(challenge or '',media_type='text/plain')
+
+@app.post('/api/execution/whatsapp/webhook')
+async def receive_whatsapp_webhook(request:HTTPRequest, db=Depends(core.get_db)):
+    raw=await request.body()
+    if len(raw)>262144: raise HTTPException(413,'Payload too large')
+    if not verify_webhook_signature(raw,request.headers.get('x-hub-signature-256','')):
+        raise HTTPException(401,'Invalid webhook signature')
+    try: payload=json.loads(raw)
+    except (ValueError,UnicodeError): raise HTTPException(422,'Invalid webhook payload')
+    changed=0
+    for event in parse_events(payload):
+        if event['kind']=='status':
+            job=db.query(WhatsAppOutbound).filter_by(provider_ref=event['message_id']).first()
+            if not job: continue
+            if event['status']=='delivered' and job.status=='PROVIDER_ACCEPTED':
+                job.status='DELIVERED'; job.delivered_at=datetime.utcnow(); changed+=1
+                delivery=db.get(core.TransportDelivery,job.delivery_id)
+                attempt=db.get(ReachAttempt,job.attempt_id)
+                if delivery: delivery.status='DELIVERED'
+                if attempt: attempt.status='DELIVERED'; attempt.reason='channel delivered; supplier has not acknowledged'
+            elif event['status']=='failed' and job.status in ('PROVIDER_ACCEPTED','DELIVERED'):
+                job.status='UNCERTAIN'; job.error='WHATSAPP_DELIVERY_FAILED'; changed+=1
+                delivery=db.get(core.TransportDelivery,job.delivery_id)
+                attempt=db.get(ReachAttempt,job.attempt_id)
+                if delivery: delivery.status='UNCERTAIN'; delivery.error=job.error
+                if attempt: attempt.status='UNCERTAIN'; attempt.reason=job.error
+        elif event['kind']=='reply':
+            job=db.query(WhatsAppOutbound).filter_by(provider_ref=event['context_id']).first()
+            if not job: continue
+            channel=db.get(WhatsAppChannel,job.channel_id)
+            try: sender=normalize_phone(event.get('from'))
+            except ValueError: continue
+            if not channel or sender!=channel.recipient: continue
+            if job.status!='ACKNOWLEDGED':
+                job.status='ACKNOWLEDGED'; job.acknowledged_at=datetime.utcnow(); changed+=1
+                delivery=db.get(core.TransportDelivery,job.delivery_id); attempt=db.get(ReachAttempt,job.attempt_id)
+                if delivery: delivery.status='ACKNOWLEDGED'
+                if attempt: attempt.status='RESPONDED'; attempt.reason='supplier replied to the outbound WhatsApp message'
+                db.add(core.Event(request_id=job.request_id,event_type='WHATSAPP_ACKNOWLEDGED',detail=f'job={job.id}'))
+    db.commit()
+    if changed: execution.refresh_notices(db)
+    return {'accepted':True,'matched_events':changed}

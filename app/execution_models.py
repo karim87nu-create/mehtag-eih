@@ -56,3 +56,32 @@ class DiscoveryCache(Base):
     key = Column(String, primary_key=True)
     payload = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class WhatsAppChannel(Base):
+    """A supplier-owned WhatsApp destination, explicitly opted in by an operator."""
+    __tablename__ = 'whatsapp_channels'
+    id = Column(Integer, primary_key=True)
+    business_id = Column(Integer, ForeignKey('businesses.id'), nullable=False, unique=True)
+    recipient = Column(String(32), nullable=False)
+    consent_basis = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default='VERIFIED')
+    verified_at = Column(DateTime, default=datetime.utcnow)
+
+class WhatsAppOutbound(Base):
+    """Provider acceptance, delivery and human acknowledgement are distinct facts."""
+    __tablename__ = 'whatsapp_outbounds'
+    __table_args__ = (UniqueConstraint('request_id', 'business_id'),)
+    id = Column(Integer, primary_key=True)
+    request_id = Column(Integer, ForeignKey('requests.id'), nullable=False)
+    business_id = Column(Integer, ForeignKey('businesses.id'), nullable=False)
+    attempt_id = Column(Integer, ForeignKey('reach_attempts.id'), nullable=False)
+    delivery_id = Column(Integer, ForeignKey('transport_deliveries.id'), nullable=False)
+    channel_id = Column(Integer, ForeignKey('whatsapp_channels.id'), nullable=False)
+    idempotency_key = Column(String, unique=True, nullable=False)
+    provider_ref = Column(String, unique=True)
+    status = Column(String, nullable=False, default='QUEUED')
+    error = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    sent_at = Column(DateTime)
+    delivered_at = Column(DateTime)
+    acknowledged_at = Column(DateTime)
