@@ -1,60 +1,176 @@
-"""Brain engine for Me'ak - Preserving system states with natural semantic handling."""
 from __future__ import annotations
-from dataclasses import dataclass, field
+
+import os
 from typing import Any
-from .intent_router import Route, RouteDecision
 
-SYSTEM_PROMPT = """
-أنت "معاك"، مساعد شخصي ذكي ورفيق واعي لتقديم دعم القرار وإدارة المهام.
+import httpx
 
-مبادئ الاستجابة الموحدة:
-1. استجابة دلالية مرنة: افهم قصد المستخدم بأي لهجة أو أسلوب تعبير دون التقيد بقوائم كلمات ثابتة.
-2. حظر الردود الآلية المكررة: يمنع تماماً استخدام العبارة الجافة "قولي أكتر" أو أي رد جاف مماثل.
-3. معالجة المدخلات القصيرة والفضفضة:
-   - إذا كان الكلام شخصياً، غير مكتمل، أو تمهيداً لحوار: التقط آخر فكرة ذكرها وتفاعل معها بأسلوب صديق مقرب واسأله سؤالاً مفتوحاً يدفعه للاسترسال.
-4. إدارة الحالات والمهام (State Management):
-   - حافظ على سياق المسودة (Draft) والعمليات النشطة، ولا تطالب بمعلومات إضافية إلا عند الحاجة الفعلية لإتمام إجراء.
-"""
+from .conversation import (
+    ActionProposal,
+    ActionType,
+    ConversationProvider,
+    FallbackProvider,
+    Intent,
+    ProviderReply,
+    ResilientProvider,
+    ResponseStyle,
+)
+from .gemini_provider import build_gemini_provider
 
-@dataclass
-class DraftState:
-    category: str = ""
-    details: dict[str, Any] = field(default_factory=dict)
-    is_ready_for_execution: bool = False
 
-class BrainEngine:
-    def __init__(self, *args, **kwargs):
-        pass
+class MaakBrain(ConversationProvider):
+    """Stable boundary between the MAAK product and whichever model runs the brain.
 
-    def process_turn(
-        self, 
-        user_text: str, 
-        decision: RouteDecision, 
-        current_draft: DraftState | None = None,
-        conversation_history: list[dict[str, str]] | None = None
-    ) -> dict[str, Any]:
-        
-        # 1. Handle Execution Trigger
-        if decision.route == Route.REQUEST_EXECUTE and current_draft and current_draft.is_ready_for_execution:
-            return {
-                "action": "execute_order",
-                "draft": current_draft,
-                "message": "جاري تنفيذ الطلب فوراً..."
-            }
+    The rest of the application talks only to this interface. The implementation
+    can be Gemini today, a self-hosted MAAK model tomorrow, or another backend
+    later without changing conversation, memory, request, or execution code.
+    """
 
-        # 2. Handle Cancellation
-        if decision.route == Route.REQUEST_CANCEL:
-            return {
-                "action": "cancel",
-                "message": "تم إلغاء العملية الحالية. كيف يمكنني مساعدتك الآن؟"
-            }
+    def __init__(self, backend: ConversationProvider, backend_name: str | None = None):
+        self.backend = backend
+        self.name = f"maak-brain:{backend_name or getattr(backend, 'name', 'provider')}"
+        self.degraded = bool(getattr(backend, "degraded", False))
 
-        # 3. Default Semantic Dynamic Generation via LLM
+    async def respond(self, context) -> ProviderReply:
+        reply = await self.backend.respond(context)
+        # Keep the backend/model metadata for diagnostics while exposing one
+        # stable product-level provider name to the rest of MAAK.
+        reply.provider = self.name
+        return reply
+
+    async def classify_route(self, context, draft=None) -> dict[str, Any] | None:
+        classifier = getattr(self.backend, "classify_route", None)
+        if classifier is None:
+            return None
+        return await classifier(context, draft)
+
+
+class RemoteMaakBrain(ConversationProvider):
+    """Adapter for a self-hosted MAAK Brain server.
+
+    Contract:
+      POST {MAAK_BRAIN_URL}/v1/respond
+      POST {MAAK_BRAIN_URL}/v1/classify
+
+    This is intentionally our own small HTTP contract rather than a vendor API,
+    so the model server can move from a laptop to a GPU box without changing the
+    MAAK application.
+    """
+
+    name = "maak-self-hosted"
+    degraded = False
+
+    def __init__(self, base_url: str, token: str | None = None, timeout: float = 20.0):
+        self.base_url = base_url.rstrip("/")
+        self.token = (token or "").strip()
+        self.timeout = max(2.0, min(float(timeout), 60.0))
+
+    def _headers(self) -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        return headers
+
+    @staticmethod
+    def _context_payload(context) -> dict[str, Any]:
         return {
-            "action": "llm_generate",
-            "system_instruction": SYSTEM_PROMPT,
-            "user_input": user_text,
-            "current_draft": current_draft,
-            "history": conversation_history or [],
-            "show_ui_card": False
+            "message": context.message,
+            "history": context.history[-12:],
+            "locale": context.locale,
+            "active_cases": context.active_cases,
+            "attachments": context.attachments[:3],
         }
+
+    async def classify_route(self, context, draft=None) -> dict[str, Any] | None:
+        payload = self._context_payload(context)
+        payload["active_request_draft"] = draft
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.post(
+                f"{self.base_url}/v1/classify",
+                headers=self._headers(),
+                json=payload,
+            )
+        response.raise_for_status()
+        data = response.json()
+        semantic_response = str(data.get("response") or "").strip()
+        if semantic_response:
+            setattr(context, "semantic_response", semantic_response)
+        setattr(context, "semantic_payload", data)
+        return data
+
+    async def respond(self, context) -> ProviderReply:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.post(
+                f"{self.base_url}/v1/respond",
+                headers=self._headers(),
+                json=self._context_payload(context),
+            )
+        response.raise_for_status()
+        data = response.json()
+
+        style_data = data.get("style") or {}
+        style = ResponseStyle(
+            language=str(style_data.get("language") or "ar"),
+            dialect=str(style_data.get("dialect") or "egyptian"),
+            tone=str(style_data.get("tone") or "warm"),
+            mood=str(style_data.get("mood") or "neutral"),
+            urgency=str(style_data.get("urgency") or "normal"),
+            formality=str(style_data.get("formality") or "casual"),
+        )
+        try:
+            intent = Intent(str(data.get("intent") or "GENERAL_QUESTION"))
+        except ValueError:
+            intent = Intent.GENERAL_QUESTION
+
+        action_data = data.get("action") or {}
+        try:
+            action_type = ActionType(str(action_data.get("type") or "NONE"))
+        except ValueError:
+            action_type = ActionType.NONE
+        action = ActionProposal(
+            action_type,
+            bool(action_data.get("authorized", False)),
+            float(action_data.get("confidence") or 0.0),
+            action_data.get("case_id"),
+            action_data.get("case_type"),
+            action_data.get("payload") or {},
+        )
+
+        return ProviderReply(
+            text=str(data.get("response") or "").strip(),
+            intent=intent,
+            confidence=float(data.get("confidence") or 0.5),
+            style=style,
+            action=action,
+            provider=self.name,
+            model=str(data.get("model") or "maak-brain"),
+            degraded=bool(data.get("degraded", False)),
+        )
+
+
+def build_brain(existing_provider: ConversationProvider) -> MaakBrain:
+    """Build the active brain without leaking vendor choices into app code.
+
+    Priority:
+    1. Self-hosted MAAK Brain when MAAK_BRAIN_URL is configured.
+    2. Existing configured Gemini path during the migration period.
+    3. Existing local/default provider already built by the application.
+    """
+
+    timeout = float(os.getenv("CONVERSATION_TIMEOUT_SECONDS", "20"))
+    brain_url = (os.getenv("MAAK_BRAIN_URL") or "").strip()
+    if brain_url:
+        remote = RemoteMaakBrain(
+            brain_url,
+            token=os.getenv("MAAK_BRAIN_TOKEN"),
+            timeout=timeout,
+        )
+        resilient = ResilientProvider(remote, FallbackProvider(), timeout_seconds=timeout)
+        return MaakBrain(resilient, "self-hosted")
+
+    gemini = build_gemini_provider()
+    if gemini is not None:
+        resilient = ResilientProvider(gemini, FallbackProvider(), timeout_seconds=timeout)
+        return MaakBrain(resilient, "migration-gemini")
+
+    return MaakBrain(existing_provider, "local-default")
