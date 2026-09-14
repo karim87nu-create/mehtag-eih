@@ -13,7 +13,7 @@ import re
 import unicodedata
 
 
-ROUTER_VERSION = "2026-09-13.3-semantic"
+ROUTER_VERSION = "2026-09-14.1-corrections"
 
 
 class Route(str, Enum):
@@ -82,6 +82,15 @@ def route_turn(text: str, *, draft_exists: bool = False) -> RouteDecision:
         return RouteDecision(Route.REQUEST_CANCEL, 1.0)
     if value in _CASUAL:
         return RouteDecision(Route.CASUAL_CHAT, 1.0)
+
+    # An explicit amendment belongs to the live draft.  This must run before
+    # question detection because Egyptian corrections often contain words such
+    # as "خليها" or a trailing question mark while still being constraints.
+    if draft_exists and (
+        re.search(r"(?:^|\s)(?:بدل|مش|لا،?|لا\s+)(?:\s|$)", value)
+        or any(p in value for p in ("غيرها ل", "غيره ل", "خليها ", "خليه ", "قصدي ", "مش قصدي "))
+    ):
+        return RouteDecision(Route.REQUEST_DETAIL, 0.98, fits_active_draft=True)
 
     if re.search(r"(?:صور|صوره|photos?|pictures?|images?)", value) and (
         token_set & {"عايز", "عاوز", "محتاج", "وريني", "ورني", "اعرضلي", "فرجني", "show"}

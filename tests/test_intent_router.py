@@ -26,6 +26,13 @@ def test_motorcycle_draft_routes_without_executing_early():
     assert route_turn("ابدأ", draft_exists=True).route == Route.REQUEST_EXECUTE
 
 
+def test_explicit_draft_corrections_are_details_not_new_requests_or_questions():
+    for text in ("لا مش مستعمل، جديد", "خليها 80 ألف بدل 70", "قصدي مصر الجديدة"):
+        result = route_turn(text, draft_exists=True)
+        assert result.route == Route.REQUEST_DETAIL
+        assert result.fits_active_draft is True
+
+
 def test_questions_and_chat_never_become_draft_details():
     for text in ("ايه الفرق بين الجديد والمستعمل؟", "هو ده كويس؟", "انا متردد", "بص", "شكرا"):
         assert route_turn(text, draft_exists=True).route != Route.REQUEST_DETAIL

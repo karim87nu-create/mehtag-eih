@@ -79,6 +79,11 @@
     </details>
   </section>
 
+  <section id="intentPulse" class="intent-pulse hidden" aria-live="polite">
+    <span class="intent-pulse-dot"></span>
+    <span class="intent-pulse-copy"><b id="intentLabel">بفهم طلبك</b><small id="intentNext">بحدد أنسب مسار</small></span>
+  </section>
+
   <section class="conversation-composer" id="composer">
     <form id="chatForm" autocomplete="off">
       <textarea id="chatInput" rows="1" placeholder="اكتب أو اتكلم…" aria-label="اكتب رسالتك"></textarea>
@@ -104,6 +109,9 @@
   const send=document.getElementById('sendBtn');
   const mic=document.getElementById('micBtn');
   const hint=document.getElementById('composerHint');
+  const pulse=document.getElementById('intentPulse');
+  const pulseLabel=document.getElementById('intentLabel');
+  const pulseNext=document.getElementById('intentNext');
   const THREAD_KEY='maak_conversation_thread_v1';
   const CUSTOMER_KEY='maak_customer_ref_v1';
   const PENDING_TURN_KEY='maak_pending_chat_turn_v1';
@@ -156,6 +164,14 @@
     wrap.innerHTML=`<small>${esc(card.label||'متابعة')}</small><b>${esc(card.title||'')}</b><span>افتح الحالة ‹</span>`;
     thread.appendChild(wrap);scrollConversation('smooth');
   }
+  function showPulse(label,next,state='working'){
+    pulse.className='intent-pulse '+state;
+    pulseLabel.textContent=label; pulseNext.textContent=next;
+  }
+  function showExperience(experience){
+    if(!experience)return pulse.classList.add('hidden');
+    showPulse(experience.label,experience.next_step,experience.state||'ready');
+  }
   async function loadHistory(){
     if(!threadId)return;
     const requestedThread=threadId;
@@ -195,17 +211,20 @@
     storedSet(PENDING_TURN_KEY,JSON.stringify({id:clientTurnId,text:text,thread_id:threadId}));
     busy=true;send.disabled=true;mic.disabled=true;
     if(historyReady&&await historyReady===false){busy=false;send.disabled=false;mic.disabled=false;return}
-    addMessage('user',text);input.value='';autoSize();hint.textContent='لحظة…';const wait=thinking();
+    addMessage('user',text);input.value='';autoSize();hint.textContent='لحظة…';
+    showPulse('بفهم طلبك','بحدد هل ده سؤال، طلب، صورة أو متابعة','working');
+    const wait=thinking();
     const controller=new AbortController();
     const timeout=setTimeout(()=>controller.abort(),45000);
-    const progress=setTimeout(()=>{hint.textContent='بفكر في رد مناسب…'},1800);
-    const slower=setTimeout(()=>{hint.textContent='ثواني كمان…'},7000);
+    const progress=setTimeout(()=>{hint.textContent='بفكر في رد مناسب…';showPulse('جهّزت المسار','بصيغ رد واضح من غير تنفيذ تلقائي','working')},1800);
+    const slower=setTimeout(()=>{hint.textContent='ثواني كمان…';showPulse('براجع السياق','بحافظ على تفاصيل كلامنا السابق','working')},7000);
     try{
       const r=await fetch('/api/chat',{method:'POST',cache:'no-store',credentials:'same-origin',signal:controller.signal,headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({message:text,thread_id:threadId,client_turn_id:clientTurnId,locale:navigator.language||'ar-EG'})});
       const isJson=(r.headers.get('content-type')||'').includes('application/json');
       const data=isJson?await r.json():null;wait.remove();if(!r.ok)throw new Error((data&&data.detail)||`HTTP ${r.status}`);
       if(!data.message||!data.message.content)throw new Error('empty response');
       threadId=data.thread_id;storedSet(THREAD_KEY,threadId);addMessage('assistant',data.message.content);addCard(data.card);
+      showExperience(data.experience);
       storedRemove(PENDING_TURN_KEY);
       degraded.classList.toggle('hidden',!data.provider.degraded);
       hint.textContent=data.action.status==='EXECUTED'?'المتابعة بدأت، والحالة قدامك.':'كمّل كلامك عادي.';
@@ -213,6 +232,7 @@
       wait.remove();
       const late=e&&e.name==='AbortError';
       addMessage('assistant',late?'الرد اتأخر ومش هخمن النتيجة. حدّث الصفحة قبل ما تكرر أي طلب تنفيذي.':'الاتصال اتقطع قبل ما أعرف النتيجة. حدّث الصفحة قبل ما تكرر أي طلب تنفيذي.');
+      showPulse('التنفيذ متوقف','مفيش نتيجة اتسجلت من المحاولة دي','stopped');
       hint.textContent=late?'تقدر تكمّل برسالة عادية.':'راجع الاتصال وجرب تاني.';
       input.value=text;autoSize();
     }

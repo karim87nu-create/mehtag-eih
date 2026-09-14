@@ -145,7 +145,48 @@ def _draft_segment(context) -> list[str]:
         if index > seed_index and _is_conversation_only_turn(turn):
             continue
         segment.append(turn)
-    return segment
+    return _resolve_explicit_corrections(segment)
+
+
+def _detail_kind(text: str) -> str | None:
+    """Classify only constraints safe enough to replace deterministically."""
+    value = _norm(text)
+    correction_number = _is_explicit_correction(text) and any(ch.isdigit() for ch in value) and not re.search(r"[a-z]", value)
+    if any(ch.isdigit() for ch in value) and (
+        _looks_like_budget(text) or any(word in value for word in ("ميزاني", "جنيه", "الف", "ألف", "budget"))
+        or correction_number
+    ):
+        return "budget"
+    if any(area in value for area in (_norm(item) for item in _AREAS)):
+        return "area"
+    if set(value.split()) & {"جديد", "مستعمل", "new", "used"}:
+        return "condition"
+    if any(word in value for word in ("موديل", "model")) or re.fullmatch(r"[a-z]+[a-z0-9-]*\d+[a-z0-9-]*", value):
+        return "model"
+    return None
+
+
+def _is_explicit_correction(text: str) -> bool:
+    value = _norm(text)
+    return bool(
+        re.search(r"(?:^|\s)(?:بدل|مش|لا)(?:\s|،|$)", value)
+        or any(marker in value for marker in ("غيرها ل", "غيره ل", "خليها ", "خليه ", "قصدي ", "مش قصدي "))
+    )
+
+
+def _resolve_explicit_corrections(segment: list[str]) -> list[str]:
+    """Replace the last same-kind constraint instead of keeping contradictions.
+
+    The user's wording remains visible in chat.  Only the executable draft is
+    normalized, and only for explicit corrections with a recognizable kind.
+    """
+    resolved: list[str] = []
+    for fragment in segment:
+        kind = _detail_kind(fragment)
+        if _is_explicit_correction(fragment) and kind:
+            resolved = [item for item in resolved if _detail_kind(item) != kind]
+        resolved.append(fragment)
+    return resolved
 
 
 def _looks_like_budget(text: str) -> bool:

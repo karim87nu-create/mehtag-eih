@@ -368,6 +368,12 @@ def test_chat_persists_thread_messages_and_blocks_unwarranted_action(monkeypatch
     assert body["intent"] == "SMALL_TALK"
     assert body["provider"]["degraded"] is True
     assert body["action"]["status"] == "BLOCKED"
+    assert body["experience"] == {
+        "mode": "casual_chat",
+        "label": "محادثة",
+        "state": "ready",
+        "next_step": "كمّل كلامك عادي",
+    }
 
     with main_module.SessionLocal() as db:
         assert db.query(ConversationThread).count() == 1

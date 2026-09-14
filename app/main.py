@@ -1730,6 +1730,46 @@ def _chat_turn_busy() -> HTTPException:
     return HTTPException(409, "This chat turn is still processing", headers={"Retry-After": "2"})
 
 
+def _chat_experience(context: TurnContext, reply, action_status: str) -> dict:
+    """Return a user-facing progress summary, never model reasoning.
+
+    This is deliberately derived from the selected capability and persisted
+    action result.  Prompts, confidence, chain-of-thought and provider internals
+    are not exposed to the browser.
+    """
+    decision = getattr(context, "semantic_route_decision", None)
+    route = getattr(getattr(decision, "route", None), "value", None)
+    if not route:
+        route = {
+            "SMALL_TALK": "casual_chat",
+            "GENERAL_QUESTION": "factual_question",
+            "NEW_REQUEST": "request_seed",
+            "CONTINUATION": "request_detail",
+            "PROBLEM": "request_status/followup",
+            "DECISION": "request_status/followup",
+        }.get(reply.intent.value, "casual_chat")
+    labels = {
+        "casual_chat": ("محادثة", "كمّل كلامك عادي"),
+        "factual_question": ("سؤال", "اسأل عن أي تفصيلة مرتبطة"),
+        "comparison_recommendation": ("مقارنة", "قول أولوياتك عشان أدقّق الترشيح"),
+        "media/image_request": ("صور", "الصور تظهر داخل المحادثة"),
+        "request_seed": ("تجهيز طلب", "كمّل المواصفات ثم قل «ابدأ»"),
+        "request_detail": ("تحديث الطلب", "راجع التفاصيل ثم قل «ابدأ»"),
+        "request_execute": ("بدء التنفيذ", "تابع الحالة من الكارت"),
+        "request_cancel": ("إلغاء", "الطلب غير المنفذ لن يبدأ"),
+        "request_status/followup": ("متابعة", "الحالة المعروضة هي آخر حالة مؤكدة"),
+        "external_action": ("إجراء خارجي", "لن يُعتبر تمّ بدون قناة موثقة"),
+        "future_task": ("متابعة لاحقة", "لن تُسجّل كمنفذة قبل توصيل الجدولة"),
+    }
+    label, next_step = labels.get(route, ("محادثة", "كمّل كلامك عادي"))
+    state = "done" if action_status == "EXECUTED" else "ready"
+    if action_status == "FAILED":
+        state, next_step = "stopped", "لم يحدث تنفيذ؛ حاول مرة أخرى لاحقًا"
+    elif route == "external_action" or action_status == "BLOCKED" and route in {"request_seed", "request_detail"}:
+        state = "waiting"
+    return {"mode": route, "label": label, "state": state, "next_step": next_step}
+
+
 @app.post("/api/chat")
 async def chat_turn(payload: ChatTurnInput, request: FastAPIRequest, db: Session = Depends(get_db)):
     text = " ".join(payload.message.split())
@@ -1941,6 +1981,7 @@ async def chat_turn(payload: ChatTurnInput, request: FastAPIRequest, db: Session
         "action": {"type": reply.action.type.value, "status": action_status, "reason": action_reason},
         "linked_case": linked_case,
         "card": card,
+        "experience": _chat_experience(turn_context, reply, action_status),
     }
     if turn:
         db.refresh(turn)
