@@ -1,23 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import replace
-import os
 import re
 
 from . import patched as patched_module
-from .conversation import ActionProposal, ActionType, FallbackProvider, Intent, ProviderReply, ResilientProvider, ResponseStyle
-from .gemini_provider import build_gemini_provider
+from .brain import build_brain
+from .conversation import ActionProposal, ActionType, Intent, ProviderReply, ResponseStyle
 from .intent_router import Route, route_turn
 from .media_search import search_images
 
 app = patched_module.app
 
-_gemini_provider = build_gemini_provider()
-if _gemini_provider is not None:
-    _resilient = ResilientProvider(_gemini_provider, FallbackProvider(), timeout_seconds=float(os.getenv("CONVERSATION_TIMEOUT_SECONDS", "20")))
-    _draft = patched_module.DraftAwareProvider(_resilient)
-    patched_module._provider = _draft
-    patched_module.main_module.conversation_provider = _draft
+# The rest of MAAK now talks to one stable brain boundary. During migration the
+# builder can still use the existing provider, while a self-hosted MAAK Brain can
+# later be selected only by configuration (MAAK_BRAIN_URL) without touching the
+# conversation/request/execution code.
+_brain = build_brain(patched_module.main_module.conversation_provider)
+_draft = patched_module.DraftAwareProvider(_brain)
+patched_module._provider = _draft
+patched_module.main_module.conversation_provider = _draft
 
 _MEDIA_REQUEST_RE = re.compile(r"(?:(?:وريني|ورني|اعرض(?:لي)?|فرجني|show\s+me).{0,36}(?:صور|صوره|صورة|photos?|pictures?|images?)|(?:عايز|عاوز|محتاج|عايزه|عاوزه|محتاجه).{0,24}(?:صور|صوره|صورة)|^(?:صور|صوره|صورة)(?:\b|(?=ال|ل|\s)))", re.IGNORECASE)
 _LEGACY_DRAFT_PROMPTS = ("لما تخلص قول", "راجع التفاصيل ثم قل", "كمّل المواصفات والميزانية والمنطقة", "كمل المواصفات والميزانية والمنطقة", "تفضّله جديد ولا مستعمل", "حاطط ميزانية في حدود كام", "تحب أدور لك في أنهي منطقة")
