@@ -5,8 +5,6 @@ from enum import Enum
 import re
 import unicodedata
 
-ROUTER_VERSION = "2026-09-14.6-universal-semantic"
-
 class Route(str, Enum):
     CASUAL_CHAT = "casual_chat"
     FACTUAL_QUESTION = "factual_question"
@@ -16,9 +14,6 @@ class Route(str, Enum):
     REQUEST_DETAIL = "request_detail"
     REQUEST_EXECUTE = "request_execute"
     REQUEST_CANCEL = "request_cancel"
-    REQUEST_STATUS_FOLLOWUP = "request_status/followup"
-    EXTERNAL_ACTION = "external_action"
-    FUTURE_TASK = "future_task"
 
 @dataclass(frozen=True)
 class RouteDecision:
@@ -36,18 +31,19 @@ def normalize(text: str) -> str:
 def route_turn(text: str, *, draft_exists: bool=False) -> RouteDecision:
     value = normalize(text)
     
-    # 1. Global Strict Triggers (Universal Actions)
-    if any(k in value for k in ("الغاء", "الغي", "بلاش", "cancel", "stop")):
+    # 1. Direct Execution Triggers
+    if any(k in value for k in ("الغاء", "الغي", "بلاش", "cancel")):
         return RouteDecision(Route.REQUEST_CANCEL, 1.0)
-    if any(k in value for k in ("نفذ", "اعتمد", "ابدا", "go ahead", "proceed")):
+    if any(k in value for k in ("نفذ", "اعتمد", "ابدا", "proceed")):
         return RouteDecision(Route.REQUEST_EXECUTE, 1.0)
 
-    # 2. Universal Semantic Fallback
-    # If there is an active draft, treat short or ambiguous turns as contextual details,
-    # leaving exact dialect understanding to the Gemini Model (Brain) with full chat context.
+    # 2. Direct Casual & Storytelling Routing
+    # Any storytelling or emotional text is routed to CASUAL_CHAT
+    if not draft_exists or any(p in value for p in ("احكيلك", "بحب", "اقولها", "عارف", "حاجه", "حاجة", "مش عارف", "واحده")):
+        return RouteDecision(Route.CASUAL_CHAT, 0.95, deterministic=False)
+
+    # 3. Active Draft Support
     if draft_exists:
         return RouteDecision(Route.REQUEST_DETAIL, 0.70, fits_active_draft=True, deterministic=False)
 
-    # If no draft exists, delegate ambiguous inputs to LLM/Semantic classification
-    # so dialects across Egypt and the world are processed organically without hardcoded lists.
-    return RouteDecision(Route.CASUAL_CHAT, 0.50, deterministic=False)
+    return RouteDecision(Route.CASUAL_CHAT, 0.85, deterministic=False)
