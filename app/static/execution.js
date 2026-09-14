@@ -29,6 +29,8 @@
       if (!panel) {panel=document.createElement('section');panel.id='executionEvidence';panel.dir='rtl';thread.append(panel);}
       panel.replaceChildren();
       for (const request of data.requests) {
+        const title=String(request?.card?.title||'');
+        if (/(?:صور|صورة|صوره|photos?|pictures?|images?)/i.test(title)) continue;
         const box=document.createElement('div');box.className='chat-context-card';
         const heading=document.createElement('b');heading.textContent=request.card.label;box.append(heading);
         for (const lead of request.leads) {
@@ -41,9 +43,9 @@
         }
         panel.append(box);
       }
-      if (data.requests.length) {const credit=document.createElement('small');credit.textContent=data.attribution;panel.append(credit);}
+      if (panel.childElementCount) {const credit=document.createElement('small');credit.textContent=data.attribution;panel.append(credit);}
     } catch (_) { /* Keep previously confirmed evidence during connection failures. */ }
     finally {running=false;}
   }
-  setInterval(poll,4000);poll();document.addEventListener('visibilitychange',poll);
+  setInterval(poll,15000);poll();document.addEventListener('visibilitychange',poll);
 })();
