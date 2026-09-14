@@ -34,16 +34,43 @@
         a.appendChild(img);box.appendChild(a);
       }
       thread.appendChild(box);scrollDown();
-    }catch(_){
-      addStatus('بحث الصور اتعطل مؤقتًا. المحادثة نفسها شغالة عادي.');
-    }
+    }catch(_){addStatus('بحث الصور اتعطل مؤقتًا. المحادثة نفسها شغالة عادي.')}
   }
 
-  // Capture phase is intentional: the main chat submit handler clears the
-  // textarea immediately. We must copy the text before that happens.
+  function sendChoice(value){
+    input.value=value;
+    input.dispatchEvent(new Event('input',{bubbles:true}));
+    form.requestSubmit();
+  }
+
+  function choiceBar(labels){
+    const bar=document.createElement('div');bar.className='maak-choice-bar';bar.dir='rtl';
+    Object.assign(bar.style,{display:'flex',gap:'8px',flexWrap:'wrap',margin:'8px 56px 14px 8px'});
+    labels.forEach(label=>{
+      const b=document.createElement('button');b.type='button';b.textContent=label;
+      Object.assign(b.style,{border:'1px solid rgba(20,20,20,.16)',background:'#fff',borderRadius:'999px',padding:'10px 16px',font:'inherit',cursor:'pointer'});
+      if(label==='ابدأ'){b.style.background='#111';b.style.color='#fff'}
+      b.onclick=()=>{bar.remove();sendChoice(label)};bar.appendChild(b);
+    });
+    thread.appendChild(bar);scrollDown();
+  }
+
+  function maybeAddChoices(node){
+    if(!(node instanceof HTMLElement)||!node.classList.contains('chat-message')||!node.classList.contains('assistant'))return;
+    const text=(node.querySelector('.bubble')?.textContent||'').trim();
+    if(!text)return;
+    const previous=thread.querySelector('.maak-choice-bar');if(previous)previous.remove();
+    if(/جديد\s+ولا\s+مستعمل/.test(text))choiceBar(['جديد','مستعمل']);
+    else if(/عندي الأساسيات|التفاصيل دي مناسبة|نبدأ/.test(text))choiceBar(['ابدأ','تعديل']);
+  }
+
+  const observer=new MutationObserver(records=>records.forEach(r=>r.addedNodes.forEach(maybeAddChoices)));
+  observer.observe(thread,{childList:true});
+
+  // Capture phase: the main handler clears the textarea immediately.
   form.addEventListener('submit',()=>{
     const text=input.value.trim();
-    if(!cue.test(text))return;
-    void renderImages(text);
+    const choices=thread.querySelector('.maak-choice-bar');if(choices)choices.remove();
+    if(cue.test(text))void renderImages(text);
   },true);
 })();
