@@ -174,7 +174,11 @@ def build_brain(existing_provider: ConversationProvider) -> MaakBrain:
 
     gemini = build_gemini_provider()
     if gemini is not None:
-        resilient = ResilientProvider(gemini, existing_provider, timeout_seconds=timeout)
+        # A chat turn should never sit for ~20s waiting on an upstream model.
+        # Gemini normally answers much faster; if it doesn't, fail over quickly
+        # to the local contextual provider so the product still feels alive.
+        gemini_timeout = max(2.0, min(timeout, 5.0))
+        resilient = ResilientProvider(gemini, existing_provider, timeout_seconds=gemini_timeout)
         return MaakBrain(resilient, "migration-gemini")
 
     return MaakBrain(existing_provider, "local-default")
