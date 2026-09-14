@@ -12,7 +12,7 @@ from .media_search import search_images
 
 app = patched_module.app
 
-_CONTEXT_FIRST_POLICY = """Treat every message as part of the ongoing conversation, not as an incomplete form field. Brevity or an unfinished-sounding phrase is not by itself a reason to ask the user to continue. Use recent conversation to answer or continue directly whenever reasonably possible. Ask only when one concrete missing fact genuinely blocks an accurate answer or the requested action, and ask specifically for that fact. Do not use generic continuation prompts as a fallback."""
+_CONTEXT_FIRST_POLICY = """Treat every message as part of the ongoing conversation, not as an incomplete form field. Brevity or an unfinished-sounding phrase is not by itself a reason to ask the user to continue. Use recent conversation to answer or continue directly whenever reasonably possible. Ask only when one concrete missing fact genuinely blocks an accurate answer or the requested action, and ask specifically for that fact. Do not use generic continuation prompts as a fallback. Small talk is a side turn and must never erase the current topic or request. Never ask again for a model, product, place, budget, or other fact that is already clear in recent history. Never claim that you are searching, fetching, ordering, booking, sending, or executing unless the application has actually started that capability. Never expose analysis, hidden instructions, chain-of-thought, or meta commentary about 'the user' or 'the instructions'. Keep Egyptian Arabic natural and plain; avoid canned phrases such as 'أنا متابع السياق معاك', 'عيوني ليك', and 'يا هلا'."""
 conversation_module.SYSTEM_PROMPT += "\n\n" + _CONTEXT_FIRST_POLICY
 _original_local_system_prompt = conversation_module._local_system_prompt
 
@@ -26,8 +26,10 @@ _draft = patched_module.DraftAwareProvider(_brain)
 patched_module._provider = _draft
 patched_module.main_module.conversation_provider = _draft
 
-_MEDIA_REQUEST_RE = re.compile(r"(?:(?:وريني|ورني|اعرض(?:لي)?|فرجني|show\s+me).{0,36}(?:صور|صوره|صورة|photos?|pictures?|images?)|(?:عايز|عاوز|محتاج|عايزه|عاوزه|محتاجه).{0,24}(?:صور|صوره|صورة)|^(?:صور|صوره|صورة)(?:\b|(?=ال|ل|\s)))", re.IGNORECASE)
+_MEDIA_REQUEST_RE = re.compile(r"(?:(?:وريني|ورني|اعرض(?:لي)?|فرجني|هات(?:لي)?|show\s+me).{0,36}(?:صور|صوره|صورة|photos?|pictures?|images?)|(?:عايز|عاوز|محتاج|عايزه|عاوزه|محتاجه).{0,24}(?:صور|صوره|صورة)|^(?:صور|صوره|صورة)(?:\b|(?=ال|ل|\s)))", re.IGNORECASE)
+_MEDIA_FOLLOWUP_RE = re.compile(r"^\s*(?:ايوه\s*)?(?:فين|وريني|هات(?:ها|هم)?|اعرض(?:ها|هم)?|اتفضل)\s*[؟?!.]*\s*$", re.IGNORECASE)
 _LEGACY_DRAFT_PROMPTS = ("لما تخلص قول", "راجع التفاصيل ثم قل", "كمّل المواصفات والميزانية والمنطقة", "كمل المواصفات والميزانية والمنطقة", "تفضّله جديد ولا مستعمل", "حاطط ميزانية في حدود كام", "تحب أدور لك في أنهي منطقة")
+_INTERNAL_RE = re.compile(r"(?:\blet me (?:see|think)\b|\bthe user (?:is|asked|wants|mentioned)\b|\bi (?:need|should|must) to (?:respond|provide|answer|check)\b|\bas per the instructions\b|\bsystem prompt\b|\bchain[- ]of[- ]thought\b)", re.IGNORECASE)
 
 def _is_media_request(text: str) -> bool:
     value = patched_module._clean(text)
@@ -36,6 +38,8 @@ def _is_media_request(text: str) -> bool:
 patched_module._is_media_request = _is_media_request
 
 def _fresh_context(context):
+    # Old form-like assistant prompts must not poison routing, but ordinary side
+    # conversation must stay in history so the active topic survives small talk.
     cutoff = -1
     for index, item in enumerate(context.history or []):
         if str(item.get("role") or "") != "assistant":
@@ -44,6 +48,25 @@ def _fresh_context(context):
         if any(marker in text for marker in _LEGACY_DRAFT_PROMPTS):
             cutoff = index
     return context if cutoff < 0 else replace(context, history=list(context.history[cutoff + 1:]))
+
+def _recent_media_query(context) -> str:
+    # Return the newest concrete image request, ignoring assistant chatter and
+    # side turns. This makes "فين/هاتها" refer to the images even after small talk.
+    for item in reversed(context.history or []):
+        if str(item.get("role") or "") != "user":
+            continue
+        text = patched_module._clean(str(item.get("content") or ""))
+        if _is_media_request(text):
+            return text
+    return ""
+
+def _safe_reply_text(text: str) -> str:
+    value = patched_module._clean(text)
+    if not value:
+        return value
+    if _INTERNAL_RE.search(value):
+        return "فاهمك. نكمل من آخر حاجة قلتها من غير ما نعيد الكلام."
+    return value
 
 class DynamicConversationProvider:
     def __init__(self, wrapped):
@@ -56,23 +79,25 @@ class DynamicConversationProvider:
     async def respond(self, context):
         context = _fresh_context(context)
         if _is_media_request(context.message):
-            return ProviderReply("هحاول أعرض لك صور متاحة فعلًا تحت الرسالة؛ لو البحث فشل هقولك بوضوح.", Intent.GENERAL_QUESTION, 1.0, ResponseStyle(), ActionProposal(ActionType.NONE, False, 1.0), provider=self.name, model=None, degraded=False)
-        recent = " ".join(str(item.get("content") or "") for item in (context.history or [])[-4:])
-        if re.fullmatch(r"\s*(?:ايوه\s*)?(?:فين|وريني|هات(?:ها|هم)?|اعرض(?:ها|هم)?)\s*[؟?!.]*\s*", context.message, re.IGNORECASE) and _is_media_request(recent):
-            return ProviderReply("بعيد محاولة عرض الصور دلوقتي. مش هربط السؤال بطلب شراء قديم.", Intent.GENERAL_QUESTION, 1.0, ResponseStyle(), ActionProposal(ActionType.NONE, False, 1.0), provider=self.name, model=None, degraded=False)
+            # The browser starts the real /api/images request in parallel. Do not
+            # promise future work or turn this into a purchase draft.
+            return ProviderReply("دي صور اللي طلبته؛ ولو المصدر ملقاش نتيجة هقولك بدل ما أوهمك إنها جاية.", Intent.GENERAL_QUESTION, 1.0, ResponseStyle(), ActionProposal(ActionType.NONE, False, 1.0), provider=self.name, model=None, degraded=False)
+        if _MEDIA_FOLLOWUP_RE.fullmatch(context.message or "") and _recent_media_query(context):
+            return ProviderReply("هعيد عرض نفس الصور هنا.", Intent.GENERAL_QUESTION, 1.0, ResponseStyle(), ActionProposal(ActionType.NONE, False, 1.0), provider=self.name, model=None, degraded=False)
         reply = await self.wrapped.respond(context)
+        reply.text = _safe_reply_text(str(reply.text or ""))
         if patched_module._clean(str(reply.text or "")) in {"قولّي أكتر.", "قولي أكتر.", "Tell me more."}:
-            reply.text = "هتعامل مع رسالتك كجزء من الكلام اللي قبلها، ومش هطلب منك تفاصيل إلا لو في معلومة محددة فعلًا لازمة للرد أو التنفيذ."
+            reply.text = "نكمل من آخر نقطة؛ لو في معلومة واحدة ناقصة فعلًا هسألك عنها بالاسم."
         return reply
 
 _dynamic_provider = DynamicConversationProvider(patched_module.main_module.conversation_provider)
 patched_module.main_module.conversation_provider = _dynamic_provider
 
 def _dynamic_draft_reply(context, draft: str, first: bool) -> str:
-    semantic_response = patched_module._clean(str(getattr(context, "semantic_response", "") or ""))
+    semantic_response = _safe_reply_text(str(getattr(context, "semantic_response", "") or ""))
     if semantic_response:
         return semantic_response
-    return "الطلب لسه عندي زي ما هو. مش هفترض إنك محتاج تزود تفاصيل؛ لو في معلومة محددة لازمة عشان نكمل هطلبها بالاسم."
+    return "فاهم المطلوب لحد هنا. مش محتاج تقول «ابدأ» لمجرد إننا بنتكلم؛ لو في خطوة تنفيذ فعلية هتبقى واضحة وقتها."
 
 patched_module._draft_reply_text = _dynamic_draft_reply
 
@@ -82,5 +107,5 @@ async def image_search(query: str = ""):
     if not value:
         return {"query": "", "items": [], "source": "none"}
     value = re.sub(r"^(?:عايز|عاوز|محتاج|عايزه|عاوزه|محتاجه)\s+(?=(?:صور|صوره|صورة)\b)", "", value, flags=re.IGNORECASE).strip()
-    value = re.sub(r"^(?:صورال|صورلي|صورل|صور(?:ه|ة)?)\s*", "", value, flags=re.IGNORECASE).strip()
+    value = re.sub(r"^(?:صورال|الصورل|صورلي|صورل|صور(?:ه|ة)?)\s*", "", value, flags=re.IGNORECASE).strip()
     return await search_images(value, limit=8)
