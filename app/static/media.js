@@ -8,7 +8,7 @@
   uiFix.textContent=`
     .chat-shell{max-width:100vw!important;overflow-x:clip!important}
     .conversation-hero,.chat-thread{min-width:0!important;width:100%!important;max-width:100%!important}
-    .chat-thread{gap:4px!important}
+    .chat-thread{gap:4px!important;padding-bottom:110px!important}
     .chat-message{width:100%!important;min-width:0!important;max-width:100%!important;direction:ltr!important;margin:10px 0!important;padding:0!important}
     .chat-message.user{justify-content:flex-start!important;padding:0!important}
     .chat-message.assistant{justify-content:flex-end!important;padding:0!important}
@@ -17,14 +17,15 @@
     body.has-conversation .home-cases,body.has-conversation .quiet-card{display:none!important}
     .reminder-alert .bubble{border:1px solid rgba(239,199,132,.22)!important;border-radius:18px!important;padding:11px 14px!important;background:rgba(230,185,109,.08)!important}
     @media(max-width:600px){
-      .chat-shell{width:100%!important;max-width:100vw!important;padding-left:12px!important;padding-right:12px!important}
+      .chat-shell{width:100%!important;max-width:100vw!important;padding-left:12px!important;padding-right:12px!important;padding-bottom:150px!important}
       .chat-message .bubble{max-width:90%!important}
       .conversation-composer{max-width:calc(100vw - 18px)!important}
+      .chat-thread{padding-bottom:125px!important}
     }`;
   document.head.appendChild(uiFix);
 
-  const cue=/(?:(?:وريني|ورني|اعرضلي|فرجني|show me).*(?:صور|صورة|صوره|photos?|pictures?|images?)|(?:عايز|عاوز|محتاج|عايزه|عاوزه|محتاجه).*(?:صور|صورة|صوره)|^(?:صور|صورة|صوره)\b)/i;
-  const followupCue=/^(?:ايوه\s*)?(?:فين|وريني|هات(?:ها|هم)?|اعرض(?:ها|هم)?)\s*[؟?!.]*$/i;
+  const cue=/(?:(?:وريني|ورني|اعرضلي|اعرض|فرجني|هات(?:لي)?|show me).*(?:صور|صورة|صوره|photos?|pictures?|images?)|(?:عايز|عاوز|محتاج|عايزه|عاوزه|محتاجه).*(?:صور|صورة|صوره)|^(?:صور|صورة|صوره)\b)/i;
+  const followupCue=/^(?:ايوه\s*)?(?:فين(?:\s+(?:الصور|الصورة|الصوره))?|وريني(?:\s+(?:الصور|الصورة|الصوره))?|هات(?:ها|هم|\s+الصور|\s+الصورة|\s+الصوره)?|اعرض(?:ها|هم|\s+الصور|\s+الصورة|\s+الصوره)?)\s*[؟?!.]*$/i;
   const reminderCue=/(?:فكرني|فكّرني|ذكرني|ذكّرني|تذكير|remind\s+me)/i;
   const reminderTimeCue=/(?:\d|[٠-٩]|الساعة|الساعه|بكرة|بكره|غدا|غداً|بعد\s|الصبح|صباح|مساء|بالليل|ليل|\bam\b|\bpm\b)/i;
   const reminderCancel=/^(?:خلاص\s+)?(?:بلاش|الغي|إلغي|الغيه|متفكرنيش|ما تفكرنيش)\s*[.!؟?]*$/i;
@@ -62,16 +63,26 @@
     return row;
   }
 
+  function cleanImageQuery(text){
+    let value=(text||'').trim();
+    const directed=value.match(/(?:هات(?:لي)?|وريني|ورني|اعرض(?:لي)?|فرجني|عايز(?:ه)?|عاوز(?:ه)?|محتاج(?:ه)?)\s+(?:صور|صورة|صوره)\s*(.+)$/i);
+    if(directed&&directed[1])value=directed[1].trim();
+    else value=value.replace(/^(?:صور|صورة|صوره|الصور)\s*/i,'').trim();
+    value=value.replace(/^(?:لـ|ل)\s*/,'').trim();
+    return value||text;
+  }
+
   async function renderImages(text){
-    lastImageQuery=text;
-    const pending=addStatus('بدور على صور متاحة فعلًا…','media-pending');
+    const query=cleanImageQuery(text);
+    lastImageQuery=query;
+    const pending=addStatus('بدور على الصور…','media-pending');
     try{
-      const r=await fetch('/api/images?query='+encodeURIComponent(text),{credentials:'same-origin',cache:'no-store'});
+      const r=await fetch('/api/images?query='+encodeURIComponent(query),{credentials:'same-origin',cache:'no-store'});
       if(!r.ok)throw new Error(`HTTP ${r.status}`);
       const data=await r.json();
       pending.remove();
       if(!data.items||!data.items.length){
-        addStatus('ملقتش صور مناسبة من المصادر المتاحة دلوقتي. جرّب اكتب اسم الموديل بشكل أدق.');
+        addStatus('ملقتش صور مناسبة من المصادر المتاحة دلوقتي. جرّب اسم الموديل أو المنتج بشكل أدق.');
         return;
       }
       const box=document.createElement('div');box.className='chat-image-grid';box.dir='rtl';
