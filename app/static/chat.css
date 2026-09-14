@@ -49,18 +49,23 @@
 }
 .conversation-composer textarea::placeholder{color:#97938a}
 .composer-controls{display:flex;align-items:center;gap:7px;padding-bottom:2px;flex:0 0 auto}
-.voice-button,.chat-send{
+.voice-button,.chat-send,.attach-button{
   width:46px;height:46px;border-radius:17px;border:0;display:grid;place-items:center;transition:.18s var(--ease)
 }
 .cancel-turn{height:46px;padding:0 14px;border-radius:17px;border:1px solid #e1c6c1;background:#fff2ef;color:#923d32;font-weight:750}
 .cancel-turn:disabled{opacity:.55}
 .voice-button{background:var(--soft);color:var(--ink)}
+.attach-button{background:var(--soft);color:var(--ink);font-size:24px}
 .voice-button.listening{animation:micPulse 1.1s infinite;background:#efe0dc}
 .mic-icon{font-size:10px}
 .chat-send{background:var(--ink);color:white;font-size:22px;box-shadow:0 8px 18px rgba(20,19,16,.16)}
 .chat-send:active,.voice-button:active{transform:scale(.96)}
 .chat-send:disabled,.voice-button:disabled{opacity:.45}
+.attach-button:disabled{opacity:.45}
 .composer-hint{font-size:12px;color:var(--muted);padding:4px 8px 1px;line-height:1.6}
+.attachment-tray{display:flex;gap:7px;flex-wrap:wrap;padding:5px 8px 2px}
+.attachment-chip{display:inline-flex;align-items:center;gap:7px;max-width:220px;padding:6px 9px;border-radius:12px;background:var(--soft);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.attachment-chip button{border:0;background:transparent;font-size:18px;line-height:1;cursor:pointer;color:var(--muted)}
 .ambient-strip{margin-top:28px}
 .home-cases{margin-top:14px;margin-bottom:22px}
 .ambient-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;padding:0 4px}

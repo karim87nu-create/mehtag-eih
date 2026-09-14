@@ -1572,6 +1572,7 @@ class ChatTurnInput(BaseModel):
     # UUID generated once per send and reused by the client on network retry.
     # Optional so already-deployed/native clients remain compatible.
     client_turn_id: uuid.UUID | None = None
+    attachments: list[dict[str, str]] = Field(default_factory=list, max_length=3)
 
 
 def linked_case_context(db: Session, thread_id: str, customer_ref: str | None = None):
@@ -1817,7 +1818,37 @@ async def chat_turn(payload: ChatTurnInput, request: FastAPIRequest, db: Session
     request.state.customer_ref = customer_ref
     client_turn_id = str(payload.client_turn_id) if payload.client_turn_id else None
     locale = resolve_locale(payload.locale)
+    attachments = []
+    for item in payload.attachments:
+        name = str(item.get("name") or "مرفق").strip()[:120]
+        mime_type = str(item.get("mime_type") or "application/octet-stream").strip()[:100]
+        if mime_type == "application/octet-stream":
+            extension = name.rsplit(".", 1)[-1].casefold() if "." in name else ""
+            mime_type = {
+                "pdf": "application/pdf", "txt": "text/plain", "csv": "text/csv",
+                "json": "application/json", "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp",
+            }.get(extension, mime_type)
+        data_url = str(item.get("data_url") or "")
+        if not data_url.startswith("data:") or len(data_url) > 14_000_000:
+            raise HTTPException(422, "المرفق غير صالح أو حجمه أكبر من المسموح")
+        if not (mime_type.startswith("image/") or mime_type in {
+            "application/pdf", "text/plain", "text/csv", "application/json",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }):
+            raise HTTPException(422, "نوع الملف ده مش مدعوم دلوقتي")
+        attachments.append({"name": name, "mime_type": mime_type, "data_url": data_url})
+    attachment_signature = [
+        {"name": a["name"], "mime_type": a["mime_type"], "sha256": hashlib.sha256(a["data_url"].encode()).hexdigest()}
+        for a in attachments
+    ]
     fingerprint = _chat_turn_fingerprint(text, locale.locale)
+    if attachment_signature:
+        fingerprint = hashlib.sha256(json.dumps({
+            "message": text, "locale": locale.locale, "attachments": attachment_signature,
+        }, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
     turn = None
     lease_token = None
 
@@ -1932,7 +1963,7 @@ async def chat_turn(payload: ChatTurnInput, request: FastAPIRequest, db: Session
     ).order_by(ConversationMessage.id.desc()).limit(20).all()
     history = [{"role": row.role.lower(), "content": row.content} for row in reversed(history_rows)]
     active_cases = linked_case_context(db, thread.id, customer_ref)
-    turn_context = TurnContext(text, history, thread.locale, active_cases)
+    turn_context = TurnContext(text, history, thread.locale, active_cases, attachments)
     try:
         reply = await conversation_provider.respond(turn_context)
     except Exception:

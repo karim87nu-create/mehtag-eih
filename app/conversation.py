@@ -90,6 +90,7 @@ class TurnContext:
     history: list[dict[str, str]]
     locale: str
     active_cases: list[dict[str, Any]]
+    attachments: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -1197,7 +1198,10 @@ class FallbackProvider(ConversationProvider):
         signals = _conversation_signals(context, intent)
         action = ActionProposal()
         structured_fallback = _safe_structured_fallback(signals, style)
-        if structured_fallback and (signals.context_repair or signals.likely_correction):
+        if context.attachments:
+            names = "، ".join(item.get("name", "المرفق") for item in context.attachments[:3])
+            text = f"المرفق وصل ({names})، بس قراءة محتواه متاحة مع الذكاء الأساسي مش الرد الاحتياطي ده."
+        elif structured_fallback and (signals.context_repair or signals.likely_correction):
             text = structured_fallback
         elif social == "joke":
             text = _pick_joke(lang, context.history)
@@ -1299,11 +1303,11 @@ class FallbackProvider(ConversationProvider):
             else:
                 text = "مش واثق إني أديك إجابة دقيقة على السؤال ده بالشكل الحالي. زوّدني بتفصيلة واحدة عن اللي تقصده وأنا أجاوبك من غير تخمين." if lang != "en" else "I'm not confident I'd answer that accurately as written. Give me one detail about what you mean and I'll answer without guessing."
         else:
-            text = "كمّل، أنا متابع السياق معاك." if lang != "en" else "Go on—I'm following the context."
+            text = "قولّي أكتر." if lang != "en" else "Tell me more."
         return ProviderReply(text, intent, 0.82, style, action, self.name, None, True)
 
 
-SYSTEM_PROMPT = """You are Ma'ak, a capable personal service companion. Reply naturally in the user's language: Egyptian Arabic, English, or a comfortable mix. Adapt to mood, urgency, and formality. Never use canned acknowledgements such as 'تمام فهمتك'. You can chat, answer questions, tell jokes, and help move real-life matters forward.
+SYSTEM_PROMPT = """You are Ma'ak, a capable personal service companion. Reply naturally in the user's language: Egyptian Arabic, English, or a comfortable mix. Arabic replies must sound like everyday Egyptian speech, not translated Modern Standard Arabic and not product-status language. Adapt to mood, urgency, and formality. Never use canned acknowledgements such as 'تمام فهمتك', 'أنا متابع السياق معاك', or 'كمّل كلامك عادي'. You can chat, answer questions, understand attached images and files, tell jokes, and help move real-life matters forward.
 
 Return ONLY a JSON object with: response, intent, confidence, style, action.
 intent must be one of SMALL_TALK, NEW_REQUEST, CONTINUATION, EXTERNAL_EVENT_FOLLOWUP, PROBLEM, DECISION, GENERAL_QUESTION.
@@ -1321,11 +1325,24 @@ class OpenAICompatibleProvider(ConversationProvider):
         self.base_url = base_url.rstrip("/")
 
     async def respond(self, context: TurnContext) -> ProviderReply:
+        context_payload = asdict(context)
+        attachments = context_payload.pop("attachments", [])
+        content: list[dict[str, Any]] = [
+            {"type": "input_text", "text": json.dumps(context_payload, ensure_ascii=False)}
+        ]
+        for attachment in attachments[:3]:
+            data_url = str(attachment.get("data_url") or "")
+            mime_type = str(attachment.get("mime_type") or "")
+            filename = str(attachment.get("name") or "attachment")
+            if mime_type.startswith("image/") and data_url:
+                content.append({"type": "input_image", "image_url": data_url})
+            elif data_url:
+                content.append({"type": "input_file", "filename": filename, "file_data": data_url})
         payload = {
             "model": self.model,
             "input": [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": json.dumps(asdict(context), ensure_ascii=False)},
+                {"role": "user", "content": content},
             ],
             "text": {"format": {"type": "json_object"}},
         }

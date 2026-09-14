@@ -25,9 +25,11 @@ class CountingProvider:
     def __init__(self, action=False):
         self.calls = 0
         self.action = action
+        self.last_context = None
 
     async def respond(self, context):
         self.calls += 1
+        self.last_context = context
         proposal = ActionProposal()
         intent = Intent.SMALL_TALK
         if self.action:
@@ -72,6 +74,39 @@ def test_completed_turn_replays_exact_envelope_without_provider_or_rows(monkeypa
         assert db.query(ConversationMessage).count() == 2
         assert db.query(ConversationAction).count() == 1
     assert post("نص مختلف", turn_id).status_code == 409
+
+
+def test_chat_accepts_supported_attachment_and_passes_it_to_provider(monkeypatch):
+    reset()
+    provider = CountingProvider()
+    monkeypatch.setattr(main_module, "conversation_provider", provider)
+    response = client.post("/api/chat", json={
+        "message": "بص على الصورة دي",
+        "client_turn_id": str(uuid.uuid4()),
+        "locale": "ar-EG",
+        "attachments": [{
+            "name": "test.png", "mime_type": "image/png",
+            "data_url": "data:image/png;base64,aGVsbG8=",
+        }],
+    }, headers={"X-Customer-Ref": CUSTOMER})
+    assert response.status_code == 200
+    assert provider.last_context.attachments[0]["name"] == "test.png"
+
+
+def test_chat_rejects_unsupported_attachment_before_provider(monkeypatch):
+    reset()
+    provider = CountingProvider()
+    monkeypatch.setattr(main_module, "conversation_provider", provider)
+    response = client.post("/api/chat", json={
+        "message": "افتح ده",
+        "client_turn_id": str(uuid.uuid4()),
+        "attachments": [{
+            "name": "bad.exe", "mime_type": "application/octet-stream",
+            "data_url": "data:application/octet-stream;base64,aGVsbG8=",
+        }],
+    }, headers={"X-Customer-Ref": CUSTOMER})
+    assert response.status_code == 422
+    assert provider.calls == 0
 
 
 def test_processing_turn_rejects_concurrent_replay_and_stale_turn_resumes(monkeypatch):

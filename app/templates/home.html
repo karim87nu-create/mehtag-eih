@@ -73,10 +73,6 @@
     <div id="emptyThread" class="empty-thread">
       <span class="live-dot"></span><span>اكتب أو اتكلم وقت ما تحب</span>
     </div>
-    <details id="degradedNotice" class="degraded-notice{% if not conversation_degraded %} hidden{% endif %}">
-      <summary>قدرات المحادثة محدودة</summary>
-      <p>الحفظ والمتابعة شغالين، لكن الذكاء الحواري الكامل غير متصل حاليًا.</p>
-    </details>
   </section>
 
   <section id="intentPulse" class="intent-pulse hidden" aria-live="polite">
@@ -86,14 +82,17 @@
 
   <section class="conversation-composer" id="composer">
     <form id="chatForm" autocomplete="off">
+      <input id="attachmentInput" type="file" accept="image/*,.pdf,.txt,.csv,.json,.docx,.xlsx" multiple hidden>
       <textarea id="chatInput" rows="1" placeholder="اكتب أو اتكلم…" aria-label="اكتب رسالتك"></textarea>
       <div class="composer-controls">
+        <button class="attach-button" id="attachBtn" type="button" aria-label="إضافة صورة أو ملف" title="إضافة صورة أو ملف">＋</button>
         <button class="voice-button" id="micBtn" type="button" aria-label="اتكلم" title="اتكلم"><span class="mic-icon">●</span></button>
         <button id="cancelTurnBtn" class="cancel-turn hidden" type="button" aria-label="إيقاف الرسالة">إيقاف</button>
         <button id="sendBtn" class="chat-send" type="submit" aria-label="إرسال">↑</button>
       </div>
     </form>
-    <div class="composer-hint" id="composerHint">ابدأ الكلام بطريقتك.</div>
+    <div id="attachmentTray" class="attachment-tray hidden"></div>
+    <div class="composer-hint" id="composerHint">قول اللي في بالك.</div>
   </section>
 </main>
 
@@ -104,12 +103,14 @@
   const conversation=document.getElementById('conversation');
   const thread=document.getElementById('chatThread');
   const empty=document.getElementById('emptyThread');
-  const degraded=document.getElementById('degradedNotice');
   const form=document.getElementById('chatForm');
   const input=document.getElementById('chatInput');
   const send=document.getElementById('sendBtn');
   const mic=document.getElementById('micBtn');
   const cancelTurn=document.getElementById('cancelTurnBtn');
+  const attachBtn=document.getElementById('attachBtn');
+  const attachmentInput=document.getElementById('attachmentInput');
+  const attachmentTray=document.getElementById('attachmentTray');
   const hint=document.getElementById('composerHint');
   const pulse=document.getElementById('intentPulse');
   const pulseLabel=document.getElementById('intentLabel');
@@ -127,6 +128,26 @@
   let historyReady=null;
   let busy=false;
   let activeTurn=null;
+  let attachments=[];
+
+  function renderAttachments(){
+    attachmentTray.innerHTML='';attachmentTray.classList.toggle('hidden',!attachments.length);
+    attachments.forEach((file,index)=>{const chip=document.createElement('span');chip.className='attachment-chip';
+      chip.textContent=file.name;const remove=document.createElement('button');remove.type='button';remove.textContent='×';remove.setAttribute('aria-label','حذف '+file.name);
+      remove.onclick=()=>{attachments.splice(index,1);renderAttachments()};chip.appendChild(remove);attachmentTray.appendChild(chip)});
+  }
+  attachBtn.addEventListener('click',()=>attachmentInput.click());
+  attachmentInput.addEventListener('change',()=>{
+    const incoming=[...attachmentInput.files];attachmentInput.value='';
+    for(const file of incoming){
+      if(attachments.length>=3){hint.textContent='ممكن تبعت 3 مرفقات في الرسالة الواحدة.';break}
+      if(file.size>10*1024*1024){hint.textContent=`${file.name} أكبر من 10 ميجا.`;continue}
+      attachments.push(file);
+    }
+    renderAttachments();
+  });
+
+  function filePayload(file){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onerror=reject;reader.onload=()=>resolve({name:file.name,mime_type:file.type||'application/octet-stream',data_url:String(reader.result)});reader.readAsDataURL(file)})}
 
   function validCustomerRef(value){return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value||'')}
   function newCustomerRef(){
@@ -173,11 +194,11 @@
     pulseLabel.textContent=label; pulseNext.textContent=next;
   }
   function showExperience(experience){
-    if(!experience)return pulse.classList.add('hidden');
+    if(!experience||['casual_chat','factual_question','comparison_recommendation'].includes(experience.mode))return pulse.classList.add('hidden');
     showPulse(experience.label,experience.next_step,experience.state||'ready');
   }
   function setBusy(value){
-    busy=value;send.disabled=value;mic.disabled=value;
+    busy=value;send.disabled=value;mic.disabled=value;attachBtn.disabled=value;
     cancelTurn.classList.toggle('hidden',!value);
   }
   async function cancelActiveTurn(){
@@ -193,6 +214,7 @@
       current.cancelled=true;current.controller.abort();current.wait.remove();current.userNode.remove();
       storedRemove(PENDING_TURN_KEY);
       if(!input.value.trim()){input.value=current.text;autoSize()}
+      attachments=current.files||[];renderAttachments();
       showPulse('تم إيقاف الرسالة','عدّل الكتابة وابعتها من جديد','stopped');
       hint.textContent='الرسالة الغلط مش هتدخل في سياق المحادثة.';
     }catch(_){
@@ -207,7 +229,7 @@
       const r=await fetch(`/api/conversations/${encodeURIComponent(threadId)}`,{cache:'no-store',credentials:'same-origin'});
       if(requestedThread!==threadId)return;
       if(!r.ok){if(r.status===404){storedRemove(THREAD_KEY);threadId=null}return}
-      const data=await r.json();data.messages.forEach(m=>addMessage(m.role,m.content,false));degraded.classList.toggle('hidden',!data.degraded);scrollConversation('auto');
+      const data=await r.json();data.messages.forEach(m=>addMessage(m.role,m.content,false));scrollConversation('auto');
     }catch(e){hint.textContent='المحادثة المحفوظة مش متاحة دلوقتي.'}
   }
   async function initialize(){
@@ -230,33 +252,36 @@
     return true;
   }
   async function handle(text){
-    text=(text||'').trim();if(!text||busy)return;
+    text=(text||'').trim();if((!text&&!attachments.length)||busy)return;
+    const selectedAttachments=[...attachments];
+    if(!text)text='بص على المرفق ده وقولي محتواه.';
     let pending=null;
     try{pending=JSON.parse(storedGet(PENDING_TURN_KEY)||'null')}catch(_){storedRemove(PENDING_TURN_KEY)}
     const samePending=pending&&validCustomerRef(pending.id)&&pending.text===text&&(!pending.thread_id||pending.thread_id===threadId);
     const clientTurnId=samePending?pending.id:newCustomerRef();
     if(!clientTurnId){hint.textContent='المتصفح مش قادر ينشئ رقم آمن للرسالة.';return}
-    storedSet(PENDING_TURN_KEY,JSON.stringify({id:clientTurnId,text:text,thread_id:threadId}));
+    if(selectedAttachments.length)storedRemove(PENDING_TURN_KEY);
+    else storedSet(PENDING_TURN_KEY,JSON.stringify({id:clientTurnId,text:text,thread_id:threadId}));
     setBusy(true);
     if(historyReady&&await historyReady===false){setBusy(false);return}
-    const userNode=addMessage('user',text);input.value='';autoSize();hint.textContent='لحظة…';
-    showPulse('بفهم طلبك','بحدد هل ده سؤال، طلب، صورة أو متابعة','working');
+    const userNode=addMessage('user',text+(selectedAttachments.length?`\n📎 ${selectedAttachments.map(f=>f.name).join('، ')}`:''));input.value='';attachments=[];renderAttachments();autoSize();hint.textContent='لحظة…';
+    pulse.classList.add('hidden');
     const wait=thinking();
     const controller=new AbortController();
-    const turnState={id:clientTurnId,text,controller,wait,userNode,cancelled:false,cancelling:false};activeTurn=turnState;
+    const turnState={id:clientTurnId,text,files:selectedAttachments,controller,wait,userNode,cancelled:false,cancelling:false};activeTurn=turnState;
     const timeout=setTimeout(()=>controller.abort(),45000);
-    const progress=setTimeout(()=>{hint.textContent='بفكر في رد مناسب…';showPulse('جهّزت المسار','بصيغ رد واضح من غير تنفيذ تلقائي','working')},1800);
-    const slower=setTimeout(()=>{hint.textContent='ثواني كمان…';showPulse('براجع السياق','بحافظ على تفاصيل كلامنا السابق','working')},7000);
+    const progress=setTimeout(()=>{hint.textContent='ثواني…'},1800);
+    const slower=setTimeout(()=>{hint.textContent='لسه شغال عليها…'},7000);
     try{
-      const r=await fetch('/api/chat',{method:'POST',cache:'no-store',credentials:'same-origin',signal:controller.signal,headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({message:text,thread_id:threadId,client_turn_id:clientTurnId,locale:navigator.language||'ar-EG'})});
+      const attachmentPayload=await Promise.all(selectedAttachments.map(filePayload));
+      const r=await fetch('/api/chat',{method:'POST',cache:'no-store',credentials:'same-origin',signal:controller.signal,headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({message:text,thread_id:threadId,client_turn_id:clientTurnId,locale:navigator.language||'ar-EG',attachments:attachmentPayload})});
       const isJson=(r.headers.get('content-type')||'').includes('application/json');
       const data=isJson?await r.json():null;wait.remove();if(!r.ok)throw new Error((data&&data.detail)||`HTTP ${r.status}`);
       if(!data.message||!data.message.content)throw new Error('empty response');
       threadId=data.thread_id;storedSet(THREAD_KEY,threadId);addMessage('assistant',data.message.content);addCard(data.card);
       showExperience(data.experience);
       storedRemove(PENDING_TURN_KEY);
-      degraded.classList.toggle('hidden',!data.provider.degraded);
-      hint.textContent=data.action.status==='EXECUTED'?'المتابعة بدأت، والحالة قدامك.':'كمّل كلامك عادي.';
+      hint.textContent=data.action.status==='EXECUTED'?'بدأت، وهتلاقي الحالة قدامك.':'قول اللي في بالك.';
     }catch(e){
       wait.remove();
       if(turnState.cancelled)return;
@@ -264,7 +289,7 @@
       addMessage('assistant',late?'الرد اتأخر ومش هخمن النتيجة. حدّث الصفحة قبل ما تكرر أي طلب تنفيذي.':'الاتصال اتقطع قبل ما أعرف النتيجة. حدّث الصفحة قبل ما تكرر أي طلب تنفيذي.');
       showPulse('التنفيذ متوقف','مفيش نتيجة اتسجلت من المحاولة دي','stopped');
       hint.textContent=late?'تقدر تكمّل برسالة عادية.':'راجع الاتصال وجرب تاني.';
-      input.value=text;autoSize();
+      input.value=text;attachments=selectedAttachments;renderAttachments();autoSize();
     }
     finally{
       clearTimeout(timeout);clearTimeout(progress);clearTimeout(slower);setBusy(false);if(activeTurn===turnState)activeTurn=null;
