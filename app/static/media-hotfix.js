@@ -4,10 +4,13 @@
   const thread = document.getElementById('chatThread');
   if (!form || !input || !thread) return;
 
-  const LAST_IMAGE_KEY = 'maak_last_image_query_v2';
+  // v3 intentionally ignores the old key because v2 could be poisoned by a
+  // generic follow-up such as "عايز الصور".
+  const LAST_IMAGE_KEY = 'maak_last_image_query_v3';
   const imageCue = /(?:(?:وريني|ورني|اعرض(?:لي)?|فرجني|هات(?:لي)?|show\s+me).{0,48}(?:صور|صوره|صورة|photos?|pictures?|images?)|(?:عايز|عاوز|محتاج|عايزه|عاوزه|محتاجه).{0,32}(?:صور|صوره|صورة)|^(?:صور|صوره|صورة)(?=\s|ال|ل|$))/i;
   const startWithImage = /^(?:صور|صوره|صورة)(?=\s|ال|ل|$)/i;
   const followupCue = /^\s*(?:(?:طب|طيب)\s+)?(?:ايوه\s*)?(?:فين(?:\s+(?:الصور|الصورة|الصوره))?|وريني(?:\s+(?:الصور|الصورة|الصوره))?|هات(?:ها|هم|\s+الصور|\s+الصورة|\s+الصوره)?|اعرض(?:ها|هم|\s+الصور|\s+الصورة|\s+الصوره)?)\s*[؟?!.]*\s*$/i;
+  const genericImageCue = /^\s*(?:(?:طب|طيب)\s+)?(?:(?:عايز|عاوز|محتاج|عايزه|عاوزه|محتاجه|هات|هاتلي|وريني|اعرضلي|اعرض)\s+)?(?:ال)?(?:صور|الصورة|الصوره|صورة|صوره)\s*[؟?!.]*\s*$/i;
 
   function storedGet(key) { try { return localStorage.getItem(key); } catch (_) { return null; } }
   function storedSet(key, value) { try { localStorage.setItem(key, value); } catch (_) {} }
@@ -50,33 +53,43 @@
 
   function cleanQuery(text) {
     let value = String(text || '').trim();
+    if (genericImageCue.test(value)) return '';
     const directed = value.match(/(?:هات(?:لي)?|وريني|ورني|اعرض(?:لي)?|فرجني|عايز(?:ه)?|عاوز(?:ه)?|محتاج(?:ه)?)\s+(?:صور|صورة|صوره)\s*(.+)$/i);
     if (directed && directed[1]) value = directed[1].trim();
     else value = value.replace(/^(?:صور|صورة|صوره|الصور)\s*/i, '').trim();
     value = value.replace(/^(?:ال|لـ|ل)\s*/i, '').trim();
 
-    // Common typo seen in the active RKV250 conversation. Keep the correction
-    // narrow so unrelated product codes are never rewritten.
+    // Narrow correction for the active motorcycle model typo.
     if (/\brve\s*-?\s*250\b/i.test(value)) value = value.replace(/rve\s*-?\s*250/ig, 'RKV250');
-    return value || String(text || '').trim();
+    return value;
   }
 
   function lastQueryFromDom() {
     const nodes = [...thread.querySelectorAll('.chat-message.user .bubble')].reverse();
     for (const node of nodes) {
       const text = (node.textContent || '').trim();
-      if (imageCue.test(text)) return cleanQuery(text);
+      if (!imageCue.test(text)) continue;
+      const query = cleanQuery(text);
+      if (query) return query;
     }
     return '';
   }
 
   function getLastQuery() {
-    return storedGet(LAST_IMAGE_KEY) || lastQueryFromDom();
+    // Prefer the visible conversation over localStorage so a stale/generic value
+    // can never replace the actual subject the user asked for.
+    const fromDom = lastQueryFromDom();
+    if (fromDom) return fromDom;
+    const saved = cleanQuery(storedGet(LAST_IMAGE_KEY) || '');
+    return saved || '';
   }
 
   async function renderImages(query) {
     query = cleanQuery(query);
-    if (!query) return;
+    if (!query) {
+      addStatus('صور إيه بالظبط؟ قول اسم الحاجة أو الموديل.');
+      return;
+    }
     storedSet(LAST_IMAGE_KEY, query);
     const pending = addStatus('بدور على الصور…', 'media-pending');
     try {
@@ -85,7 +98,7 @@
       const data = await response.json();
       pending.remove();
       if (!data.items || !data.items.length) {
-        addStatus('ملقتش صور مناسبة للموديل ده من المصادر المتاحة.');
+        addStatus('ملقتش صور موثوقة للموديل ده من المصادر المتاحة، فمش هعرض صور ملهاش علاقة بيه.');
         return;
       }
       const old = thread.querySelector('.chat-image-grid[data-hotfix="1"]');
@@ -117,29 +130,31 @@
     }
   }
 
+  function interceptAsImageFollowup(text, sourceEvent) {
+    const last = getLastQuery();
+    sourceEvent.preventDefault();
+    sourceEvent.stopImmediatePropagation();
+    addUser(text);
+    input.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    if (last) void renderImages(last);
+    else addStatus('صور إيه بالظبط؟ قول اسم الحاجة أو الموديل.');
+    return true;
+  }
+
   function maybeHandle(text, sourceEvent) {
     text = String(text || '').trim();
     if (!text) return false;
 
-    if (followupCue.test(text)) {
-      const last = getLastQuery();
-      if (!last) return false;
-      sourceEvent.preventDefault();
-      sourceEvent.stopImmediatePropagation();
-      addUser(text);
-      input.value = '';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      void renderImages(last);
-      return true;
+    if (followupCue.test(text) || genericImageCue.test(text)) {
+      return interceptAsImageFollowup(text, sourceEvent);
     }
 
     if (imageCue.test(text)) {
       const query = cleanQuery(text);
-      storedSet(LAST_IMAGE_KEY, query);
-      // The legacy client misses Arabic messages that START with صورة/صور
-      // because JavaScript \b is ASCII-oriented. Render those here while still
-      // allowing the normal chat turn through so conversation context is kept.
-      if (startWithImage.test(text)) void renderImages(query);
+      if (query) storedSet(LAST_IMAGE_KEY, query);
+      // The legacy client misses Arabic messages that START with صورة/صور.
+      if (startWithImage.test(text) && query) void renderImages(query);
     }
     return false;
   }

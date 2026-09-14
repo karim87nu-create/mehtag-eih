@@ -10,15 +10,22 @@ _IMAGE_CUE_RE = re.compile(
     r"(?:وريني|ورني|اعرض(?:لي)?|فرجني|صور|صوره|صورة|show\s+me|photos?|pictures?|images?)",
     re.IGNORECASE,
 )
+_REQUEST_FILLER_RE = re.compile(
+    r"(?:عايز|عاوز|محتاج|عايزه|عاوزه|محتاجه|هاتلي|هات|جيبلي|جيب|من\s+فضلك)",
+    re.IGNORECASE,
+)
 
 
 def clean_image_query(text: str) -> str:
     value = " ".join((text or "").strip().split())
     value = _IMAGE_CUE_RE.sub(" ", value)
-    value = re.sub(r"\b(?:ال|لل)\b", " ", value)
+    value = _REQUEST_FILLER_RE.sub(" ", value)
+    value = re.sub(r"\b(?:ال|لل|لي)\b", " ", value)
     value = " ".join(value.split()).strip("-–—:،,. ")
     low = value.casefold().replace("-", "").replace("_", "").replace(" ", "")
-    if "rkv250" in low:
+    if not low:
+        return ""
+    if "rkv250" in low or "rve250" in low:
         return "Keeway RKV 250"
     return value[:120]
 
@@ -26,7 +33,7 @@ def clean_image_query(text: str) -> str:
 def _query_candidates(query: str) -> list[str]:
     low = query.casefold().replace("-", "").replace("_", "").replace(" ", "")
     if "keewayrkv250" in low or "rkv250" in low:
-        values = ["Keeway RKV", "Keeway RKV 250", "Keeway motorcycle"]
+        values = ["Keeway RKV 250", "Keeway RKV"]
     elif any(word in query for word in ("موتوسيكل", "موتوسكل", "دراجة نارية")):
         values = ["motorcycle", query]
     else:
@@ -38,6 +45,12 @@ def _query_candidates(query: str) -> list[str]:
 def _safe_url(value: Any) -> str | None:
     url = str(value or "").strip()
     return url if url.startswith(("https://", "http://")) else None
+
+
+def _rkv_relevant(item: dict[str, str]) -> bool:
+    haystack = " ".join(str(item.get(k) or "") for k in ("title", "url", "thumbnail")).casefold()
+    compact = haystack.replace("-", "").replace("_", "").replace(" ", "")
+    return "rkv" in compact and ("keeway" in compact or "rkv250" in compact)
 
 
 async def _openverse(query: str, limit: int) -> list[dict[str, str]]:
@@ -110,11 +123,9 @@ async def search_images(text: str, limit: int = 8) -> dict[str, Any]:
 
     candidates = _query_candidates(query)
     normalized = query.casefold().replace("-", "").replace("_", "").replace(" ", "")
+    exact_rkv = "keewayrkv250" in normalized or "rkv250" in normalized
 
-    # Commons is known to index Keeway RKV well, while trying several empty
-    # Openverse searches first added ~15-20 seconds. For this model family use
-    # the best-known source/query first. Generic searches still prefer Openverse.
-    if "keewayrkv250" in normalized or "rkv250" in normalized:
+    if exact_rkv:
         source_order = ((_commons, "Wikimedia Commons"), (_openverse, "Openverse"))
     else:
         source_order = ((_openverse, "Openverse"), (_commons, "Wikimedia Commons"))
@@ -123,8 +134,10 @@ async def search_images(text: str, limit: int = 8) -> dict[str, Any]:
         for candidate in candidates:
             try:
                 items = await searcher(candidate, limit)
+                if exact_rkv:
+                    items = [item for item in items if _rkv_relevant(item)]
                 if items:
-                    return {"query": candidate, "items": items, "source": source_name}
+                    return {"query": candidate, "items": items[:limit], "source": source_name}
             except Exception:
                 pass
 
