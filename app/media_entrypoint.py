@@ -47,6 +47,11 @@ _LEGACY_DRAFT_PROMPTS = (
     "كمّل المواصفات والميزانية والمنطقة",
     "كمل المواصفات والميزانية والمنطقة",
 )
+_PRODUCT_HINT_RE = re.compile(
+    r"(?:موتوسيكل|موتسيكل|عربيه|عربية|سياره|سيارة|موبايل|تليفون|لابتوب|لاب توب|"
+    r"شقه|شقة|مكتب|جهاز|تلفزيون|غساله|غسالة|تكييف|bike|motorcycle|car|phone|laptop)",
+    re.IGNORECASE,
+)
 
 
 def _is_media_request(text: str) -> bool:
@@ -67,8 +72,14 @@ def _request_seed_without_media(text: str) -> bool:
 patched_module._is_media_request = _is_media_request
 patched_module._is_request_seed = _request_seed_without_media
 
-# Do not let drafts created by the old form-like flow leak into the new guided flow.
+
 def _without_legacy_draft_history(context):
+    """Cut off the old form-like request flow completely.
+
+    Old assistant prompts must not keep an obsolete draft alive. This preserves
+    newer conversation turns while preventing the historic draft from being
+    executable or from steering Gemini.
+    """
     cutoff = -1
     for index, item in enumerate(context.history or []):
         if str(item.get("role") or "") != "assistant":
@@ -81,10 +92,6 @@ def _without_legacy_draft_history(context):
     return replace(context, history=list(context.history[cutoff + 1 :]))
 
 
-# A live draft is a conversation, not a bag that swallows every following turn.
-# Keep only answers that are recognisable as request constraints. In particular,
-# phrases such as "بحب جديد" or an objection must not become a condition merely
-# because they contain the word "جديد".
 _original_draft_segment = patched_module._draft_segment
 
 
@@ -115,17 +122,56 @@ def _guided_segment(context):
 patched_module._draft_segment = _guided_segment
 
 
+def _strict_draft_detail(context) -> bool:
+    """Only an actual answer/constraint may mutate a live draft.
+
+    The old router treated almost any short phrase as REQUEST_DETAIL. That made
+    objections and normal conversation such as 'منا بقولك' or 'اي العبط ده'
+    become request data. Keep deterministic controls separate and accept only
+    recognisable constraints here; ambiguous language stays normal chat.
+    """
+    segment = _guided_segment(context)
+    if not segment:
+        return False
+    current = patched_module._clean(context.message)
+    if _request_seed_without_media(current):
+        return True
+    if (
+        patched_module._is_small_talk(current)
+        or patched_module._is_execute_control(current)
+        or patched_module._is_cancel_control(current)
+        or patched_module._is_conversation_only_turn(current)
+    ):
+        return False
+    kind = patched_module._detail_kind(current)
+    if kind == "condition":
+        return _safe_condition(current)
+    return kind in {"budget", "area", "model"} or patched_module._is_explicit_correction(current)
+
+
+patched_module._is_draft_detail = _strict_draft_detail
+
+
 def _guided_reply(context, draft: str, first: bool) -> str:
     segment = _guided_segment(context)
     details = segment[1:] if len(segment) > 1 else []
     kinds = {patched_module._detail_kind(item) for item in details}
-    if "condition" not in kinds:
-        return "تمام، نمشيها واحدة واحدة. تفضّله جديد ولا مستعمل؟"
-    if "budget" not in kinds:
-        return "حلو. حاطط ميزانية في حدود كام؟"
-    if "area" not in kinds:
-        return "تمام. تحب أدور لك في أنهي منطقة؟"
-    return "تمام، كده عندي الأساسيات. لو التفاصيل دي مناسبة ليك نبدأ، ولو عايز تعدّل حاجة قولّي."
+    seed = segment[0] if segment else ""
+
+    # Product-shopping requests benefit from condition/budget questions. Do not
+    # force the same form onto services or everyday conversation.
+    if _PRODUCT_HINT_RE.search(seed):
+        if "condition" not in kinds:
+            return "تمام. تفضّله جديد ولا مستعمل؟"
+        if "budget" not in kinds:
+            return "تمام. حاطط ميزانية في حدود كام؟"
+        if "area" not in kinds:
+            return "حلو. تحب أدور لك في أنهي منطقة؟"
+        return "تمام، كده الصورة واضحة. نبدأ؟"
+
+    if first:
+        return "تمام. احكيلي محتاج إيه بالظبط، وأنا هسألك بس عن التفصيلة اللي ناقصة."
+    return "تمام، فهمتك. كمّل براحتك."
 
 
 patched_module._draft_reply_text = _guided_reply
