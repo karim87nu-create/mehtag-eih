@@ -39,6 +39,17 @@ _MEDIA_REQUEST_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Everyday human wants are conversation, not procurement. A phrase such as
+# "عايز اكل" or "محتاج انام" must stay in normal chat unless the user later
+# makes an explicit search/order request. This deliberately sits only in the
+# experience entrypoint so older Railway services keep their existing behavior.
+_EVERYDAY_WANT_RE = re.compile(
+    r"^(?:انا\s+)?(?:عايز|عاوز|محتاج|عايزه|عاوزه|محتاجه)\s+"
+    r"(?:اكل|آكل|اشرب|أشرب|انام|أنام|ارتاح|أرتاح|قهوه|قهوة|شاي|ميه|مياه|"
+    r"افطر|أفطر|اتغدى|أتغدى|اتعشى|أتعشى|اكل حاجه|آكل حاجة)(?:\s|$)",
+    re.IGNORECASE,
+)
+
 
 def _is_media_request(text: str) -> bool:
     value = patched_module._clean(text)
@@ -49,13 +60,14 @@ _original_request_seed = patched_module._is_request_seed
 
 
 def _request_seed_without_media(text: str) -> bool:
-    if _is_media_request(text):
+    value = patched_module._clean(text)
+    if _is_media_request(value) or _EVERYDAY_WANT_RE.search(value):
         return False
-    return _original_request_seed(text)
+    return _original_request_seed(value)
 
 
 # Draft helpers in patched.py resolve these globals at runtime, so replacing
-# them here prevents media-only turns from contaminating an open/new request.
+# them here prevents media/everyday-chat turns from contaminating an open/new request.
 patched_module._is_media_request = _is_media_request
 patched_module._is_request_seed = _request_seed_without_media
 
