@@ -19,8 +19,7 @@ from .media_search import search_images
 
 app = patched_module.app
 
-# The experience service starts through this module. Keep Gemini activation here
-# so the legacy app.main services remain untouched even when they share the repo.
+# Experience-only intelligence activation. Legacy Railway services keep app.main.
 _gemini_provider = build_gemini_provider()
 if _gemini_provider is not None:
     patched_module.main_module.conversation_provider = ResilientProvider(
@@ -29,20 +28,12 @@ if _gemini_provider is not None:
         timeout_seconds=float(os.getenv("CONVERSATION_TIMEOUT_SECONDS", "20")),
     )
 
-# Natural image requests, including joined mobile typing, must never be folded into
-# a purchase draft. Patch the runtime detector without duplicating the larger
-# conversation layer.
 _MEDIA_REQUEST_RE = re.compile(
     r"(?:(?:وريني|ورني|اعرض(?:لي)?|فرجني|show\s+me).{0,36}(?:صور|صوره|صورة|photos?|pictures?|images?)|"
     r"(?:عايز|عاوز|محتاج|عايزه|عاوزه|محتاجه).{0,24}(?:صور|صوره|صورة)|"
     r"^(?:صور|صوره|صورة)(?:\b|(?=ال|ل|\s)))",
     re.IGNORECASE,
 )
-
-# Everyday human wants are conversation, not procurement. A phrase such as
-# "عايز اكل" or "محتاج انام" must stay in normal chat unless the user later
-# makes an explicit search/order request. This deliberately sits only in the
-# experience entrypoint so older Railway services keep their existing behavior.
 _EVERYDAY_WANT_RE = re.compile(
     r"^(?:انا\s+)?(?:عايز|عاوز|محتاج|عايزه|عاوزه|محتاجه)\s+"
     r"(?:اكل|آكل|اشرب|أشرب|انام|أنام|ارتاح|أرتاح|قهوه|قهوة|شاي|ميه|مياه|"
@@ -66,10 +57,56 @@ def _request_seed_without_media(text: str) -> bool:
     return _original_request_seed(value)
 
 
-# Draft helpers in patched.py resolve these globals at runtime, so replacing
-# them here prevents media/everyday-chat turns from contaminating an open/new request.
 patched_module._is_media_request = _is_media_request
 patched_module._is_request_seed = _request_seed_without_media
+
+# A live draft is a conversation, not a bag that swallows every following turn.
+# Keep only answers that are recognisable as request constraints. In particular,
+# phrases such as "بحب جديد" or an objection must not become a condition merely
+# because they contain the word "جديد".
+_original_draft_segment = patched_module._draft_segment
+
+
+def _safe_condition(text: str) -> bool:
+    value = patched_module._norm(text)
+    return bool(re.fullmatch(r"(?:عايزه?\s+|عاوزه?\s+|يفضل\s+)?(?:جديد|مستعمل|new|used)", value))
+
+
+def _guided_segment(context):
+    raw = _original_draft_segment(context)
+    if not raw:
+        return raw
+    kept = [raw[0]]
+    for fragment in raw[1:]:
+        value = patched_module._clean(fragment)
+        kind = patched_module._detail_kind(value)
+        if kind == "condition" and not _safe_condition(value):
+            continue
+        if kind in {"budget", "area", "model"} or (kind == "condition" and _safe_condition(value)):
+            kept.append(value)
+            continue
+        if patched_module._is_explicit_correction(value):
+            kept.append(value)
+    return patched_module._resolve_explicit_corrections(kept)
+
+
+patched_module._draft_segment = _guided_segment
+
+
+def _guided_reply(context, draft: str, first: bool) -> str:
+    segment = _guided_segment(context)
+    details = segment[1:] if len(segment) > 1 else []
+    kinds = {patched_module._detail_kind(item) for item in details}
+    if "condition" not in kinds:
+        return "تمام، نمشيها واحدة واحدة. تفضّله جديد ولا مستعمل؟"
+    if "budget" not in kinds:
+        return "حلو. حاطط ميزانية في حدود كام؟"
+    if "area" not in kinds:
+        return "تمام. تحب أدور لك في أنهي منطقة؟"
+    return "تمام، كده عندي الأساسيات. لو التفاصيل دي مناسبة ليك نبدأ، ولو عايز تعدّل حاجة قولّي."
+
+
+patched_module._draft_reply_text = _guided_reply
 
 
 class MediaAwareProvider:
@@ -110,16 +147,9 @@ async def image_search(query: str = ""):
         return {"query": "", "items": [], "source": "none"}
     value = re.sub(
         r"^(?:عايز|عاوز|محتاج|عايزه|عاوزه|محتاجه)\s+(?=(?:صور|صوره|صورة)\b)",
-        "",
-        value,
-        flags=re.IGNORECASE,
+        "", value, flags=re.IGNORECASE,
     ).strip()
-    # Mobile Arabic typing commonly joins the command to the article, for
-    # example "صورال RKV250". Keep the product term and discard the command.
     value = re.sub(
-        r"^(?:صورال|صورلي|صورل|صور(?:ه|ة)?)\s*",
-        "",
-        value,
-        flags=re.IGNORECASE,
+        r"^(?:صورال|صورلي|صورل|صور(?:ه|ة)?)\s*", "", value, flags=re.IGNORECASE,
     ).strip()
     return await search_images(value, limit=8)
