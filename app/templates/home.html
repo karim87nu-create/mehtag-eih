@@ -89,6 +89,7 @@
       <textarea id="chatInput" rows="1" placeholder="اكتب أو اتكلم…" aria-label="اكتب رسالتك"></textarea>
       <div class="composer-controls">
         <button class="voice-button" id="micBtn" type="button" aria-label="اتكلم" title="اتكلم"><span class="mic-icon">●</span></button>
+        <button id="cancelTurnBtn" class="cancel-turn hidden" type="button" aria-label="إيقاف الرسالة">إيقاف</button>
         <button id="sendBtn" class="chat-send" type="submit" aria-label="إرسال">↑</button>
       </div>
     </form>
@@ -108,6 +109,7 @@
   const input=document.getElementById('chatInput');
   const send=document.getElementById('sendBtn');
   const mic=document.getElementById('micBtn');
+  const cancelTurn=document.getElementById('cancelTurnBtn');
   const hint=document.getElementById('composerHint');
   const pulse=document.getElementById('intentPulse');
   const pulseLabel=document.getElementById('intentLabel');
@@ -124,6 +126,7 @@
   let customerRef=storedGet(CUSTOMER_KEY);
   let historyReady=null;
   let busy=false;
+  let activeTurn=null;
 
   function validCustomerRef(value){return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value||'')}
   function newCustomerRef(){
@@ -153,6 +156,7 @@
       : `<div class="bubble">${esc(text)}</div>`;
     setDirection(wrap.querySelector('.bubble'),text);thread.appendChild(wrap);
     if(animate)scrollConversation(role==='assistant'?'smooth':'auto');
+    return wrap;
   }
   function thinking(){
     const node=document.createElement('div');node.className='chat-message assistant entering thinking-message';
@@ -172,6 +176,30 @@
     if(!experience)return pulse.classList.add('hidden');
     showPulse(experience.label,experience.next_step,experience.state||'ready');
   }
+  function setBusy(value){
+    busy=value;send.disabled=value;mic.disabled=value;
+    cancelTurn.classList.toggle('hidden',!value);
+  }
+  async function cancelActiveTurn(){
+    const current=activeTurn;if(!current||current.cancelling)return;
+    current.cancelling=true;cancelTurn.disabled=true;hint.textContent='بوقف الرسالة…';
+    try{
+      const r=await fetch(`/api/chat/turns/${encodeURIComponent(current.id)}/cancel`,{
+        method:'POST',cache:'no-store',credentials:'same-origin',headers:{'Accept':'application/json'}
+      });
+      const data=await r.json();
+      if(!r.ok)throw new Error(data.detail||`HTTP ${r.status}`);
+      if(!data.cancelled){hint.textContent='الرد خلص قبل ما الإيقاف يوصل.';return}
+      current.cancelled=true;current.controller.abort();current.wait.remove();current.userNode.remove();
+      storedRemove(PENDING_TURN_KEY);
+      if(!input.value.trim()){input.value=current.text;autoSize()}
+      showPulse('تم إيقاف الرسالة','عدّل الكتابة وابعتها من جديد','stopped');
+      hint.textContent='الرسالة الغلط مش هتدخل في سياق المحادثة.';
+    }catch(_){
+      hint.textContent='معرفتش أأكد الإيقاف؛ استنى النتيجة عشان ما نكررّش تنفيذ.';
+    }finally{current.cancelling=false;cancelTurn.disabled=false}
+  }
+  cancelTurn.addEventListener('click',cancelActiveTurn);
   async function loadHistory(){
     if(!threadId)return;
     const requestedThread=threadId;
@@ -209,12 +237,13 @@
     const clientTurnId=samePending?pending.id:newCustomerRef();
     if(!clientTurnId){hint.textContent='المتصفح مش قادر ينشئ رقم آمن للرسالة.';return}
     storedSet(PENDING_TURN_KEY,JSON.stringify({id:clientTurnId,text:text,thread_id:threadId}));
-    busy=true;send.disabled=true;mic.disabled=true;
-    if(historyReady&&await historyReady===false){busy=false;send.disabled=false;mic.disabled=false;return}
-    addMessage('user',text);input.value='';autoSize();hint.textContent='لحظة…';
+    setBusy(true);
+    if(historyReady&&await historyReady===false){setBusy(false);return}
+    const userNode=addMessage('user',text);input.value='';autoSize();hint.textContent='لحظة…';
     showPulse('بفهم طلبك','بحدد هل ده سؤال، طلب، صورة أو متابعة','working');
     const wait=thinking();
     const controller=new AbortController();
+    const turnState={id:clientTurnId,text,controller,wait,userNode,cancelled:false,cancelling:false};activeTurn=turnState;
     const timeout=setTimeout(()=>controller.abort(),45000);
     const progress=setTimeout(()=>{hint.textContent='بفكر في رد مناسب…';showPulse('جهّزت المسار','بصيغ رد واضح من غير تنفيذ تلقائي','working')},1800);
     const slower=setTimeout(()=>{hint.textContent='ثواني كمان…';showPulse('براجع السياق','بحافظ على تفاصيل كلامنا السابق','working')},7000);
@@ -230,6 +259,7 @@
       hint.textContent=data.action.status==='EXECUTED'?'المتابعة بدأت، والحالة قدامك.':'كمّل كلامك عادي.';
     }catch(e){
       wait.remove();
+      if(turnState.cancelled)return;
       const late=e&&e.name==='AbortError';
       addMessage('assistant',late?'الرد اتأخر ومش هخمن النتيجة. حدّث الصفحة قبل ما تكرر أي طلب تنفيذي.':'الاتصال اتقطع قبل ما أعرف النتيجة. حدّث الصفحة قبل ما تكرر أي طلب تنفيذي.');
       showPulse('التنفيذ متوقف','مفيش نتيجة اتسجلت من المحاولة دي','stopped');
@@ -237,7 +267,7 @@
       input.value=text;autoSize();
     }
     finally{
-      clearTimeout(timeout);clearTimeout(progress);clearTimeout(slower);busy=false;send.disabled=false;mic.disabled=false;
+      clearTimeout(timeout);clearTimeout(progress);clearTimeout(slower);setBusy(false);if(activeTurn===turnState)activeTurn=null;
       try{input.focus({preventScroll:true})}catch(_){input.focus()}
     }
   }

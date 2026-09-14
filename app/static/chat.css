@@ -52,6 +52,8 @@
 .voice-button,.chat-send{
   width:46px;height:46px;border-radius:17px;border:0;display:grid;place-items:center;transition:.18s var(--ease)
 }
+.cancel-turn{height:46px;padding:0 14px;border-radius:17px;border:1px solid #e1c6c1;background:#fff2ef;color:#923d32;font-weight:750}
+.cancel-turn:disabled{opacity:.55}
 .voice-button{background:var(--soft);color:var(--ink)}
 .voice-button.listening{animation:micPulse 1.1s infinite;background:#efe0dc}
 .mic-icon{font-size:10px}

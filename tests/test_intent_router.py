@@ -13,6 +13,9 @@ def test_required_arabic_routes():
         "شكرا": Route.CASUAL_CHAT,
         "عايز صور rkv250": Route.MEDIA_IMAGE_REQUEST,
         "صورال RKV250": Route.MEDIA_IMAGE_REQUEST,
+        "عامل ع": Route.CASUAL_CHAT,
+        "عامل ايا": Route.CASUAL_CHAT,
+        "عامل إيه؟": Route.CASUAL_CHAT,
     }
     for text, expected in cases.items():
         assert route_turn(text).route == expected

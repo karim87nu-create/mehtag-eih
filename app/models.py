@@ -364,7 +364,7 @@ class ConversationTurn(Base):
     customer_ref = Column(String(36), nullable=False, index=True)
     client_turn_id = Column(String(36), nullable=False)
     request_fingerprint = Column(String(64), nullable=False)
-    status = Column(String, nullable=False, default="PROCESSING")  # PROCESSING/COMPLETED/FAILED
+    status = Column(String, nullable=False, default="PROCESSING")  # PROCESSING/COMPLETED/FAILED/CANCELLED
     lease_token = Column(String(36), nullable=False)
     attempt_count = Column(Integer, nullable=False, default=1)
     user_message_id = Column(Integer, ForeignKey("conversation_messages.id"), nullable=True)

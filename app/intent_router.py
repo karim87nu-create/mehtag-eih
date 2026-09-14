@@ -13,7 +13,7 @@ import re
 import unicodedata
 
 
-ROUTER_VERSION = "2026-09-14.1-corrections"
+ROUTER_VERSION = "2026-09-14.2-typo-cancel"
 
 
 class Route(str, Enum):
@@ -82,6 +82,10 @@ def route_turn(text: str, *, draft_exists: bool = False) -> RouteDecision:
         return RouteDecision(Route.REQUEST_CANCEL, 1.0)
     if value in _CASUAL:
         return RouteDecision(Route.CASUAL_CHAT, 1.0)
+    # Common incomplete/phonetic mobile typing for "عامل إيه؟" should stay
+    # instant small talk instead of spending a model call or becoming a draft.
+    if re.fullmatch(r"(?:انت\s+)?عامل\s+(?:ع|ا|اي|ايا|ايه)\s*[؟?]?", value):
+        return RouteDecision(Route.CASUAL_CHAT, 0.99)
 
     # An explicit amendment belongs to the live draft.  This must run before
     # question detection because Egyptian corrections often contain words such

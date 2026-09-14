@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta
+import asyncio
+import threading
 import uuid
 
 from fastapi.testclient import TestClient
@@ -126,3 +128,61 @@ def test_create_request_is_once_per_client_turn(monkeypatch):
         assert db.query(ConversationCaseLink).count() == 1
         assert db.query(ConversationAction).filter_by(status="EXECUTED").count() == 1
 
+
+def test_cancel_processing_turn_revokes_action_and_removes_typo_from_context(monkeypatch):
+    reset()
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingProvider(CountingProvider):
+        async def respond(self, context):
+            self.calls += 1
+            started.set()
+            await asyncio.to_thread(release.wait, 5)
+            return ProviderReply(
+                "رد لا يجب حفظه", Intent.NEW_REQUEST, .99, ResponseStyle(),
+                ActionProposal(ActionType.CREATE_REQUEST, True, .99, payload={"text": context.message}),
+                provider=self.name, model="test-model", degraded=False,
+            )
+
+    provider = BlockingProvider(action=True)
+    monkeypatch.setattr(main_module, "conversation_provider", provider)
+    turn_id = str(uuid.uuid4())
+    result = {}
+
+    def send_wrong_turn():
+        with TestClient(main_module.app) as background_client:
+            result["response"] = background_client.post(
+                "/api/chat",
+                json={"message": "عامل ع", "client_turn_id": turn_id, "locale": "ar-EG"},
+                headers={"X-Customer-Ref": CUSTOMER},
+            )
+
+    worker = threading.Thread(target=send_wrong_turn)
+    worker.start()
+    assert started.wait(3)
+    with TestClient(main_module.app) as cancel_client:
+        cancelled = cancel_client.post(
+            f"/api/chat/turns/{turn_id}/cancel",
+            headers={"X-Customer-Ref": CUSTOMER},
+        )
+    assert cancelled.status_code == 200
+    assert cancelled.json() == {"cancelled": True, "status": "CANCELLED"}
+    release.set(); worker.join(5)
+    assert not worker.is_alive()
+    assert result["response"].status_code == 409
+
+    with main_module.SessionLocal() as db:
+        turn = db.query(ConversationTurn).one()
+        assert turn.status == "CANCELLED"
+        assert db.query(ConversationMessage).one().role == "CANCELLED"
+        assert db.query(ConversationAction).count() == 0
+        assert db.query(Request).count() == 0
+
+    corrected = post("عامل إيه؟", str(uuid.uuid4()))
+    assert corrected.status_code == 200
+    history = client.get(
+        f"/api/conversations/{corrected.json()['thread_id']}",
+        headers={"X-Customer-Ref": CUSTOMER},
+    )
+    assert [m["content"] for m in history.json()["messages"]] == ["عامل إيه؟", "رد لا يجب حفظه"]

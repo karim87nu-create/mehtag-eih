@@ -45,6 +45,7 @@ _SMALL_TALK = {
 _ATTENTION_CUES = {
     "بص", "بصي", "اسمع", "اسمعني", "شوف", "شوفي", "look", "listen",
 }
+_HOW_ARE_YOU_RE = re.compile(r"^(?:انت\s+)?عامل\s+(?:ع|ا|اي|ايا|ايه)\s*[؟?]?$", re.IGNORECASE)
 _CONVERSATION_PREFIXES = (
     "ايه ", "إيه ", "ازاي ", "إزاي ", "ليه ", "مين ", "فين ", "امتى ", "إمتى ",
     "هل ", "وريني ", "ورني ", "اعرض ", "اعرضلي ", "فرجني ", "اشرح ", "اشرحلي ",
@@ -81,7 +82,10 @@ def _is_cancel_control(text: str) -> bool:
 
 
 def _is_small_talk(text: str) -> bool:
-    return route_turn(text).route == Route.CASUAL_CHAT and _norm(text) in {_norm(item) for item in _SMALL_TALK}
+    return route_turn(text).route == Route.CASUAL_CHAT and (
+        _norm(text) in {_norm(item) for item in _SMALL_TALK}
+        or bool(_HOW_ARE_YOU_RE.fullmatch(_norm(text)))
+    )
 
 
 def _is_attention_cue(text: str) -> bool:
@@ -308,6 +312,17 @@ class DraftAwareProvider:
             return _placeholder(Intent.NEW_REQUEST if _is_request_seed(current) else Intent.CONTINUATION)
         if _is_execute_control(current) and not draft:
             return _placeholder(Intent.CONTINUATION)
+        if _HOW_ARE_YOU_RE.fullmatch(_norm(current)):
+            return ProviderReply(
+                "تمام الحمد لله، معاك. إنت عامل إيه؟",
+                Intent.SMALL_TALK,
+                1.0,
+                ResponseStyle(),
+                ActionProposal(ActionType.NONE, False, 1.0),
+                provider="router-fast-path",
+                model=None,
+                degraded=False,
+            )
         if _is_small_talk(current) and context.active_cases:
             return _placeholder(Intent.SMALL_TALK)
 
@@ -476,6 +491,17 @@ def _draft_aware_policy(reply, context):
 
     # Keep thanks after an active request contextual instead of resetting to a
     # greeting. No business action is ever proposed here.
+    if _HOW_ARE_YOU_RE.fullmatch(_norm(current)):
+        return ProviderReply(
+            "تمام الحمد لله، معاك. إنت عامل إيه؟",
+            Intent.SMALL_TALK,
+            1.0,
+            safe.style,
+            ActionProposal(ActionType.NONE, False, 1.0),
+            provider=_provider.name,
+            model=getattr(safe, "model", None),
+            degraded=_provider.degraded,
+        )
     if _is_small_talk(current) and context.active_cases:
         return ProviderReply(
             "العفو، أنا متابع الطلب معاك.",

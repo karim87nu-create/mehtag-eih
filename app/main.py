@@ -1730,6 +1730,44 @@ def _chat_turn_busy() -> HTTPException:
     return HTTPException(409, "This chat turn is still processing", headers={"Retry-After": "2"})
 
 
+@app.post("/api/chat/turns/{client_turn_id}/cancel")
+def cancel_chat_turn(client_turn_id: str, request: FastAPIRequest, db: Session = Depends(get_db)):
+    """Revoke an in-flight turn before it can cross the action boundary."""
+    try:
+        canonical_turn_id = str(uuid.UUID(client_turn_id))
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(404, "Chat turn not found")
+    customer_ref = customer_ref_from_request(request)
+    turn = db.query(ConversationTurn).filter(
+        ConversationTurn.customer_ref == customer_ref,
+        ConversationTurn.client_turn_id == canonical_turn_id,
+    ).first()
+    if not turn:
+        raise HTTPException(404, "Chat turn not found")
+    if turn.status != "PROCESSING":
+        return {"cancelled": False, "status": turn.status}
+    changed = db.query(ConversationTurn).filter(
+        ConversationTurn.id == turn.id,
+        ConversationTurn.status == "PROCESSING",
+    ).update({
+        ConversationTurn.status: "CANCELLED",
+        ConversationTurn.updated_at: datetime.utcnow(),
+    }, synchronize_session=False)
+    if changed != 1:
+        db.rollback()
+        db.refresh(turn)
+        return {"cancelled": False, "status": turn.status}
+    if turn.user_message_id:
+        message = db.get(ConversationMessage, turn.user_message_id)
+        if message and message.thread_id == turn.thread_id and message.role == "USER":
+            # Preserve the audit row but keep the typo out of future context and
+            # history. The revoked worker already owns an in-memory snapshot;
+            # its status check below prevents any action or assistant message.
+            message.role = "CANCELLED"
+    db.commit()
+    return {"cancelled": True, "status": "CANCELLED"}
+
+
 def _chat_experience(context: TurnContext, reply, action_status: str) -> dict:
     """Return a user-facing progress summary, never model reasoning.
 
@@ -1801,6 +1839,8 @@ async def chat_turn(payload: ChatTurnInput, request: FastAPIRequest, db: Session
                 except (TypeError, ValueError):
                     turn.status = "FAILED"
                     db.commit()
+            if turn.status == "CANCELLED":
+                raise HTTPException(409, "This chat turn was cancelled; submit the correction as a new turn")
             cutoff = datetime.utcnow() - timedelta(seconds=CHAT_TURN_STALE_SECONDS)
             if turn.status == "PROCESSING" and turn.updated_at and turn.updated_at > cutoff:
                 raise _chat_turn_busy()
@@ -1888,6 +1928,7 @@ async def chat_turn(payload: ChatTurnInput, request: FastAPIRequest, db: Session
     history_rows = db.query(ConversationMessage).filter(
         ConversationMessage.thread_id == thread.id,
         ConversationMessage.id != user_message.id,
+        ConversationMessage.role != "CANCELLED",
     ).order_by(ConversationMessage.id.desc()).limit(20).all()
     history = [{"role": row.role.lower(), "content": row.content} for row in reversed(history_rows)]
     active_cases = linked_case_context(db, thread.id, customer_ref)
@@ -2006,7 +2047,8 @@ def conversation_history(thread_id: str, request: FastAPIRequest, db: Session = 
     if not thread:
         raise HTTPException(404, "Conversation not found")
     rows = db.query(ConversationMessage).filter(
-        ConversationMessage.thread_id == thread.id
+        ConversationMessage.thread_id == thread.id,
+        ConversationMessage.role != "CANCELLED",
     ).order_by(ConversationMessage.id.asc()).all()
     return {
         "thread_id": thread.id,
