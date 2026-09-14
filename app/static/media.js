@@ -4,6 +4,8 @@
   const thread=document.getElementById('chatThread');
   if(!form||!input||!thread)return;
   const cue=/(?:(?:وريني|ورني|اعرضلي|فرجني|show me).*(?:صور|صورة|صوره|photos?|pictures?|images?)|(?:عايز|عاوز|محتاج|عايزه|عاوزه|محتاجه).*(?:صور|صورة|صوره)|^(?:صور|صورة|صوره)\b)/i;
+  const followupCue=/^(?:ايوه\s*)?(?:فين|وريني|هات(?:ها|هم)?|اعرض(?:ها|هم)?)\s*[؟?!.]*$/i;
+  let lastImageQuery='';
 
   function scrollDown(){
     const conversation=document.getElementById('conversation');
@@ -18,10 +20,15 @@
   }
 
   async function renderImages(text){
+    lastImageQuery=text;
+    const pending=document.createElement('div');pending.className='chat-message assistant entering media-pending';
+    const pendingBubble=document.createElement('div');pendingBubble.className='bubble';pendingBubble.dir='rtl';pendingBubble.textContent='بدور على صور متاحة فعلًا…';
+    pending.appendChild(pendingBubble);thread.appendChild(pending);scrollDown();
     try{
       const r=await fetch('/api/images?query='+encodeURIComponent(text),{credentials:'same-origin',cache:'no-store'});
       if(!r.ok)throw new Error(`HTTP ${r.status}`);
       const data=await r.json();
+      pending.remove();
       if(!data.items||!data.items.length){
         addStatus('ملقتش صور مناسبة من المصادر المتاحة دلوقتي. جرّب اكتب اسم الموديل بشكل أدق.');
         return;
@@ -34,7 +41,7 @@
         a.appendChild(img);box.appendChild(a);
       }
       thread.appendChild(box);scrollDown();
-    }catch(_){addStatus('بحث الصور اتعطل مؤقتًا. المحادثة نفسها شغالة عادي.')}
+    }catch(_){pending.remove();addStatus('بحث الصور اتعطل مؤقتًا، ومش هقول إن الصور جاهزة وهي مش ظاهرة.')}
   }
 
   function sendChoice(value){
@@ -72,5 +79,6 @@
     const text=input.value.trim();
     const choices=thread.querySelector('.maak-choice-bar');if(choices)choices.remove();
     if(cue.test(text))void renderImages(text);
+    else if(lastImageQuery&&followupCue.test(text))void renderImages(lastImageQuery);
   },true);
 })();

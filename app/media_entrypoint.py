@@ -56,7 +56,10 @@ class DynamicConversationProvider:
     async def respond(self, context):
         context = _fresh_context(context)
         if _is_media_request(context.message):
-            return ProviderReply("تمام، بجيبلك الصور المناسبة دلوقتي.", Intent.GENERAL_QUESTION, 1.0, ResponseStyle(), ActionProposal(ActionType.NONE, False, 1.0), provider=self.name, model=None, degraded=False)
+            return ProviderReply("هحاول أعرض لك صور متاحة فعلًا تحت الرسالة؛ لو البحث فشل هقولك بوضوح.", Intent.GENERAL_QUESTION, 1.0, ResponseStyle(), ActionProposal(ActionType.NONE, False, 1.0), provider=self.name, model=None, degraded=False)
+        recent = " ".join(str(item.get("content") or "") for item in (context.history or [])[-4:])
+        if re.fullmatch(r"\s*(?:ايوه\s*)?(?:فين|وريني|هات(?:ها|هم)?|اعرض(?:ها|هم)?)\s*[؟?!.]*\s*", context.message, re.IGNORECASE) and _is_media_request(recent):
+            return ProviderReply("بعيد محاولة عرض الصور دلوقتي. مش هربط السؤال بطلب شراء قديم.", Intent.GENERAL_QUESTION, 1.0, ResponseStyle(), ActionProposal(ActionType.NONE, False, 1.0), provider=self.name, model=None, degraded=False)
         reply = await self.wrapped.respond(context)
         if patched_module._clean(str(reply.text or "")) in {"قولّي أكتر.", "قولي أكتر.", "Tell me more."}:
             reply.text = "هتعامل مع رسالتك كجزء من الكلام اللي قبلها، ومش هطلب منك تفاصيل إلا لو في معلومة محددة فعلًا لازمة للرد أو التنفيذ."
