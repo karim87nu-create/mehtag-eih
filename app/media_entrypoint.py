@@ -1,13 +1,33 @@
 from __future__ import annotations
 
+import os
 import re
 
 from . import patched as patched_module
-from .conversation import ActionProposal, ActionType, Intent, ProviderReply, ResponseStyle
+from .conversation import (
+    ActionProposal,
+    ActionType,
+    FallbackProvider,
+    Intent,
+    ProviderReply,
+    ResilientProvider,
+    ResponseStyle,
+)
+from .gemini_provider import build_gemini_provider
 from .intent_router import Route, route_turn
 from .media_search import search_images
 
 app = patched_module.app
+
+# The experience service starts through this module. Keep Gemini activation here
+# so the legacy app.main services remain untouched even when they share the repo.
+_gemini_provider = build_gemini_provider()
+if _gemini_provider is not None:
+    patched_module.main_module.conversation_provider = ResilientProvider(
+        _gemini_provider,
+        FallbackProvider(),
+        timeout_seconds=float(os.getenv("CONVERSATION_TIMEOUT_SECONDS", "20")),
+    )
 
 # Natural image requests, including joined mobile typing, must never be folded into
 # a purchase draft. Patch the runtime detector without duplicating the larger
@@ -59,6 +79,12 @@ class MediaAwareProvider:
                 degraded=False,
             )
         return await self.wrapped.respond(context)
+
+    async def classify_route(self, context, draft=None):
+        classifier = getattr(self.wrapped, "classify_route", None)
+        if classifier is None:
+            return None
+        return await classifier(context, draft)
 
 
 _media_provider = MediaAwareProvider(patched_module.main_module.conversation_provider)
