@@ -5,7 +5,7 @@ from enum import Enum
 import re
 import unicodedata
 
-ROUTER_VERSION = "2026-09-14.3-semantic-draft"
+ROUTER_VERSION = "2026-09-14.4-natural-media"
 
 class Route(str, Enum):
     CASUAL_CHAT = "casual_chat"
@@ -46,9 +46,23 @@ def normalize(text: str) -> str:
 def words(text: str) -> set[str]:
     return set(re.findall(r"[^\W_]+", normalize(text), flags=re.UNICODE))
 
-_EXECUTE={"ابدا","ابدا البحث","ابدا دلوقتي","نفذ","دور","دورلي","كمل وابدا","ابدا التنفيذ","start","go","go ahead","proceed","search now"}
+_EXECUTE={
+    "ابدا","ابدا البحث","ابدا دلوقتي","نفذ","دور","دورلي","كمل وابدا","ابدا التنفيذ",
+    "اتفضل","اتفضلي","شوفي واديني","شوف واديني","دوري واديني","دور واديني",
+    "start","go","go ahead","proceed","search now"
+}
 _CANCEL={"بلاش","خلاص بلاش","الغيه","الغي","متبداش","ما تبداش","متنفذش","ما تنفذش","مش عايز","خلاص مش عايز","cancel","never mind","nevermind","stop","don't start","do not start"}
 _CASUAL={"بص","بصي","اسمع","اسمعني","شكرا","متشكر","تسلم","اهلا","هاي","hello","hi","باي","bye","thanks","thank you"}
+
+_RECOMMENDATION_PHRASES=(
+    "مكان حلو", "مكان اخرج", "اخرج فيه", "اخرج فين", "خروجه", "فسحه", "فسحة",
+    "اتمشي", "امشي فيه", "مكان للمشي", "مكان اتمشي", "نروح فين"
+)
+_RECOMMENDATION_ACTIONS=("ابحث", "دور", "دوري", "احجز", "اطلب", "اشتري", "كلم", "نفذ")
+_MEDIA_FOLLOWUPS=(
+    "فين الصور", "فين الصوره", "فين الصورة", "هات الصور", "هات الصوره", "هات الصورة",
+    "وريني الصور", "اعرض الصور", "show the photos", "where are the photos"
+)
 
 def route_turn(text: str, *, draft_exists: bool=False) -> RouteDecision:
     value=normalize(text); token_set=words(text)
@@ -58,11 +72,15 @@ def route_turn(text: str, *, draft_exists: bool=False) -> RouteDecision:
     if re.fullmatch(r"(?:انت\s+)?عامل\s+(?:ع|ا|اي|ايا|ايه)\s*[؟?]?",value): return RouteDecision(Route.CASUAL_CHAT,.99)
     if draft_exists and (re.search(r"(?:^|\s)(?:بدل|مش|لا،?|لا\s+)(?:\s|$)",value) or any(p in value for p in ("غيرها ل","غيره ل","خليها ","خليه ","قصدي ","مش قصدي "))):
         return RouteDecision(Route.REQUEST_DETAIL,.98,fits_active_draft=True)
-    if re.search(r"(?:صور|صوره|photos?|pictures?|images?)",value) and (token_set & {"عايز","عاوز","محتاج","وريني","ورني","اعرضلي","فرجني","show"} or value.startswith(("صور","صوره"))): return RouteDecision(Route.MEDIA_IMAGE_REQUEST,.99)
+    if any(p in value for p in _MEDIA_FOLLOWUPS):
+        return RouteDecision(Route.MEDIA_IMAGE_REQUEST,.995)
+    if re.search(r"(?:صور|صوره|photos?|pictures?|images?)",value) and (token_set & {"عايز","عاوز","محتاج","وريني","ورني","اعرضلي","فرجني","هات","هاتلي","show"} or value.startswith(("صور","صوره"))): return RouteDecision(Route.MEDIA_IMAGE_REQUEST,.99)
     if any(p in value for p in ("فين الطلب","حاله الطلب","الطلب وصل","وصل لفين","وصلنا لفين","اخر تحديث","order status","request status","where is my order")): return RouteDecision(Route.REQUEST_STATUS_FOLLOWUP,.98)
     if any(p in value for p in ("فكرني","بكره","بعد ساعه","remind me","tomorrow","later")): return RouteDecision(Route.FUTURE_TASK,.95)
     if any(p in value for p in ("ابعته ل","ابعت ل","كلم ","send it to","message ")): return RouteDecision(Route.EXTERNAL_ACTION,.94)
     if any(p in value for p in ("رشحلي","قارن","ايه الافضل","مين الافضل","هو ده كويس","انا متردد","رايك","recommend","compare","is this good","i am unsure")): return RouteDecision(Route.COMPARISON_RECOMMENDATION,.97)
+    if any(p in value for p in _RECOMMENDATION_PHRASES) and not any(p in value for p in _RECOMMENDATION_ACTIONS):
+        return RouteDecision(Route.COMPARISON_RECOMMENDATION,.96)
     if any(p in value for p in ("عايز اعرف","عاوز اعرف","محتاج اعرف","مش اشتري","للمعرفه","ايه الفرق","اشرحلي","يعني ايه","i want to know","not buy")): return RouteDecision(Route.FACTUAL_QUESTION,.99)
     if "?" in text or "؟" in text or token_set & {"ليه","ازاي","ايه","مين","امتي","what","why","how","who","when","which"}: return RouteDecision(Route.FACTUAL_QUESTION,.93)
     # A possible request seed is semantic, not authorization. Keep this generic.
