@@ -5,8 +5,9 @@
 <title>معاك</title>
 <link rel="stylesheet" href="/static/app.css">
 <link rel="stylesheet" href="/static/chat.css">
+<link rel="stylesheet" href="/static/maak-home.css">
 <link rel="manifest" href="/static/manifest.webmanifest">
-<meta name="theme-color" content="#f6f3ee">
+<meta name="theme-color" content="#0c0a08">
 </head>
 <body>
 <main class="app-shell chat-shell">
@@ -19,300 +20,42 @@
   <section class="ambient-strip home-cases" aria-label="الموضوعات المفتوحة">
     <div class="ambient-title"><b>متابعها معاك</b><span>{{ open_cases|length }} مفتوح</span></div>
     <div class="ambient-list">
-      {% for c in open_cases %}
-      {% if loop.index <= 5 %}
-      <a class="ambient-item" href="{{ c.url }}">
-        <span class="ambient-dot"></span>
-        <span><b>{{ c.title }}</b><small>
-          {% if c.status == "AWAITING_PAYMENT" %}محتاج قرارك
-          {% elif c.status == "CONFIRMED" %}اتأكد وبدأت المتابعة
-          {% elif c.status == "IN_PROGRESS" %}جاري التنفيذ
-          {% elif c.status == "OUT_FOR_DELIVERY" %}في الطريق
-          {% elif c.status == "COMPLETED_PENDING_CONFIRMATION" %}محتاج أتأكد منك
-          {% elif c.status == "ISSUE_OPEN" %}فيه مشكلة مفتوحة
-          {% elif c.status == "WAITING_OFFERS" %}تواصل مؤكد — مستنيين عروض
-          {% elif c.status == "OFFER_FOUND" %}وصل عرض فعلي
-          {% elif c.status == "SUPPLY_FOUND_NO_CHANNEL" %}لقينا جهات — التواصل مش مؤكد
-          {% elif c.status == "DISCOVERING" %}بندور على جهات مناسبة
-          {% elif c.status == "NO_REACHABLE_SUPPLY" %}ملقيناش جهة قابلة للتواصل دلوقتي
-          {% else %}المتابعة مفتوحة{% endif %}
-        </small></span>
-        <span class="ambient-arrow">‹</span>
-      </a>
-      {% endif %}
-      {% endfor %}
+      {% for c in open_cases %}{% if loop.index <= 5 %}
+      <a class="ambient-item" href="{{ c.url }}"><span class="ambient-dot"></span><span><b>{{ c.title }}</b><small>
+        {% if c.status == "AWAITING_PAYMENT" %}محتاج قرارك{% elif c.status == "CONFIRMED" %}اتأكد وبدأت المتابعة{% elif c.status == "IN_PROGRESS" %}جاري التنفيذ{% elif c.status == "OUT_FOR_DELIVERY" %}في الطريق{% elif c.status == "COMPLETED_PENDING_CONFIRMATION" %}محتاج أتأكد منك{% elif c.status == "ISSUE_OPEN" %}فيه مشكلة مفتوحة{% elif c.status == "WAITING_OFFERS" %}تواصل مؤكد — مستنيين عروض{% elif c.status == "OFFER_FOUND" %}وصل عرض فعلي{% elif c.status == "SUPPLY_FOUND_NO_CHANNEL" %}لقينا جهات — التواصل مش مؤكد{% elif c.status == "DISCOVERING" %}بندور على جهات مناسبة{% elif c.status == "NO_REACHABLE_SUPPLY" %}ملقيناش جهة قابلة للتواصل دلوقتي{% else %}المتابعة مفتوحة{% endif %}
+      </small></span><span class="ambient-arrow">‹</span></a>
+      {% endif %}{% endfor %}
     </div>
-  </section>
-  {% endif %}
+  </section>{% endif %}
 
-  {% if followups %}
-  {% set f = followups[0] %}
-  <section class="quiet-card">
-    <span class="quiet-label">محتاج قرارك</span>
-    <h3>{{ f.case.title }}</h3>
-    <p>{{ f.task.action }}</p>
-    <a class="quiet-action" href="/external/{{ f.case.id }}">افتح المتابعة</a>
-  </section>
-  {% endif %}
+  {% if followups %}{% set f = followups[0] %}<section class="quiet-card"><span class="quiet-label">محتاج قرارك</span><h3>{{ f.case.title }}</h3><p>{{ f.task.action }}</p><a class="quiet-action" href="/external/{{ f.case.id }}">افتح المتابعة</a></section>{% endif %}
+  {% if suggestions %}{% set s = suggestions[0] %}<section class="quiet-card suggestion"><span class="quiet-label">لاحظت حاجة</span><h3>{{ s.suggested_action or s.title }}</h3><p>{{ s.raw_text }}</p><div class="inline-actions"><form method="post" action="/suggestions/{{ s.id }}/accept"><button class="quiet-action solid">تابعها معايا</button></form><form method="post" action="/suggestions/{{ s.id }}/dismiss"><button class="quiet-action">مش محتاج</button></form></div></section>{% endif %}
 
-  {% if suggestions %}
-  {% set s = suggestions[0] %}
-  <section class="quiet-card suggestion">
-    <span class="quiet-label">لاحظت حاجة</span>
-    <h3>{{ s.suggested_action or s.title }}</h3>
-    <p>{{ s.raw_text }}</p>
-    <div class="inline-actions">
-      <form method="post" action="/suggestions/{{ s.id }}/accept"><button class="quiet-action solid">تابعها معايا</button></form>
-      <form method="post" action="/suggestions/{{ s.id }}/dismiss"><button class="quiet-action">مش محتاج</button></form>
-    </div>
-  </section>
-  {% endif %}
-
-  <section class="conversation-hero" id="conversation" aria-live="polite">
-    <div id="chatThread" class="chat-thread"></div>
-    <div id="emptyThread" class="empty-thread">
-      <span class="live-dot"></span><span>اكتب أو اتكلم وقت ما تحب</span>
-    </div>
-  </section>
-
-  <section id="intentPulse" class="intent-pulse hidden" aria-live="polite">
-    <span class="intent-pulse-dot"></span>
-    <span class="intent-pulse-copy"><b id="intentLabel">بفهم طلبك</b><small id="intentNext">بحدد أنسب مسار</small></span>
-  </section>
-
-  <section class="conversation-composer" id="composer">
-    <form id="chatForm" autocomplete="off">
-      <input id="attachmentInput" type="file" accept="image/*,.pdf,.txt,.csv,.json,.docx,.xlsx" multiple hidden>
-      <textarea id="chatInput" rows="1" placeholder="اكتب أو اتكلم…" aria-label="اكتب رسالتك"></textarea>
-      <div class="composer-controls">
-        <button class="attach-button" id="attachBtn" type="button" aria-label="إضافة صورة أو ملف" title="إضافة صورة أو ملف">＋</button>
-        <button class="voice-button" id="micBtn" type="button" aria-label="اتكلم" title="اتكلم"><span class="mic-icon">●</span></button>
-        <button id="cancelTurnBtn" class="cancel-turn hidden" type="button" aria-label="إيقاف الرسالة">إيقاف</button>
-        <button id="sendBtn" class="chat-send" type="submit" aria-label="إرسال">↑</button>
-      </div>
-    </form>
-    <div id="attachmentTray" class="attachment-tray hidden"></div>
-    <div class="composer-hint" id="composerHint">قول اللي في بالك.</div>
-  </section>
+  <section class="conversation-hero" id="conversation" aria-live="polite"><div id="chatThread" class="chat-thread"></div><div id="emptyThread" class="empty-thread"><span class="live-dot"></span><span>اكتب أو اتكلم وقت ما تحب</span></div></section>
+  <section id="intentPulse" class="intent-pulse hidden" aria-live="polite"><span class="intent-pulse-dot"></span><span class="intent-pulse-copy"><b id="intentLabel">بفهم طلبك</b><small id="intentNext">بحدد أنسب مسار</small></span></section>
+  <section class="conversation-composer" id="composer"><form id="chatForm" autocomplete="off"><input id="attachmentInput" type="file" accept="image/*,.pdf,.txt,.csv,.json,.docx,.xlsx" multiple hidden><textarea id="chatInput" rows="1" placeholder="تحدث .. اكتب .. أو ارسل صورة" aria-label="اكتب رسالتك"></textarea><div class="composer-controls"><button class="attach-button" id="attachBtn" type="button" aria-label="إضافة صورة أو ملف">＋</button><button class="voice-button" id="micBtn" type="button" aria-label="اتكلم"><span class="mic-icon">●</span></button><button id="cancelTurnBtn" class="cancel-turn hidden" type="button">إيقاف</button><button id="sendBtn" class="chat-send" type="submit" aria-label="إرسال">↑</button></div></form><div id="attachmentTray" class="attachment-tray hidden"></div><div class="composer-hint" id="composerHint">معاك.</div></section>
 </main>
-
-<script src="/static/execution.js" defer></script>
-<script src="/static/media.js" defer></script>
+<script src="/static/execution.js" defer></script><script src="/static/media.js" defer></script>
 <script>
 (function(){
-  const conversation=document.getElementById('conversation');
-  const thread=document.getElementById('chatThread');
-  const empty=document.getElementById('emptyThread');
-  const form=document.getElementById('chatForm');
-  const input=document.getElementById('chatInput');
-  const send=document.getElementById('sendBtn');
-  const mic=document.getElementById('micBtn');
-  const cancelTurn=document.getElementById('cancelTurnBtn');
-  const attachBtn=document.getElementById('attachBtn');
-  const attachmentInput=document.getElementById('attachmentInput');
-  const attachmentTray=document.getElementById('attachmentTray');
-  const hint=document.getElementById('composerHint');
-  const pulse=document.getElementById('intentPulse');
-  const pulseLabel=document.getElementById('intentLabel');
-  const pulseNext=document.getElementById('intentNext');
-  const THREAD_KEY='maak_conversation_thread_v1';
-  const CUSTOMER_KEY='maak_customer_ref_v1';
-  const PENDING_TURN_KEY='maak_pending_chat_turn_v1';
-  const HAS_CUSTOMER={{ 'true' if customer_ref_present else 'false' }};
-  const memoryStore={};
-  function storedGet(key){try{return localStorage.getItem(key)}catch(_){return memoryStore[key]||null}}
-  function storedSet(key,value){memoryStore[key]=value;try{localStorage.setItem(key,value)}catch(_){}}
-  function storedRemove(key){delete memoryStore[key];try{localStorage.removeItem(key)}catch(_){}}
-  let threadId=storedGet(THREAD_KEY);
-  let customerRef=storedGet(CUSTOMER_KEY);
-  let historyReady=null;
-  let busy=false;
-  let activeTurn=null;
-  let attachments=[];
-
-  function renderAttachments(){
-    attachmentTray.innerHTML='';attachmentTray.classList.toggle('hidden',!attachments.length);
-    attachments.forEach((file,index)=>{const chip=document.createElement('span');chip.className='attachment-chip';
-      chip.textContent=file.name;const remove=document.createElement('button');remove.type='button';remove.textContent='×';remove.setAttribute('aria-label','حذف '+file.name);
-      remove.onclick=()=>{attachments.splice(index,1);renderAttachments()};chip.appendChild(remove);attachmentTray.appendChild(chip)});
-  }
-  attachBtn.addEventListener('click',()=>attachmentInput.click());
-  attachmentInput.addEventListener('change',()=>{
-    const incoming=[...attachmentInput.files];attachmentInput.value='';
-    for(const file of incoming){
-      if(attachments.length>=3){hint.textContent='ممكن تبعت 3 مرفقات في الرسالة الواحدة.';break}
-      if(file.size>10*1024*1024){hint.textContent=`${file.name} أكبر من 10 ميجا.`;continue}
-      attachments.push(file);
-    }
-    renderAttachments();
-  });
-
-  function filePayload(file){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onerror=reject;reader.onload=()=>resolve({name:file.name,mime_type:file.type||'application/octet-stream',data_url:String(reader.result)});reader.readAsDataURL(file)})}
-
-  function validCustomerRef(value){return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value||'')}
-  function newCustomerRef(){
-    if(window.crypto&&crypto.randomUUID)return crypto.randomUUID();
-    if(window.crypto&&crypto.getRandomValues){
-      const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
-      const h=[...bytes].map(b=>b.toString(16).padStart(2,'0')).join('');
-      return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
-    }
-    return null;
-  }
-
-  function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#039;'}[m]))}
-  function setDirection(node,text){
-    const ar=(text.match(/[\u0600-\u06ff]/g)||[]).length;
-    const en=(text.match(/[A-Za-z]/g)||[]).length;
-    node.dir=ar>=en?'rtl':'ltr';
-  }
-  function scrollConversation(behavior='auto'){
-    requestAnimationFrame(()=>conversation.scrollTo({top:conversation.scrollHeight,behavior}));
-  }
-  function addMessage(role,text,animate=true){
-    empty.classList.add('hidden');
-    const wrap=document.createElement('div');wrap.className='chat-message '+role+(animate?' entering':'');
-    wrap.innerHTML=role==='assistant'
-      ? `<div class="assistant-avatar">م</div><div class="bubble">${esc(text)}</div>`
-      : `<div class="bubble">${esc(text)}</div>`;
-    setDirection(wrap.querySelector('.bubble'),text);thread.appendChild(wrap);
-    if(animate)scrollConversation(role==='assistant'?'smooth':'auto');
-    return wrap;
-  }
-  function thinking(){
-    const node=document.createElement('div');node.className='chat-message assistant entering thinking-message';
-    node.innerHTML='<div class="assistant-avatar">م</div><div class="bubble"><span class="thinking-inline"><i></i><i></i><i></i></span></div>';
-    thread.appendChild(node);scrollConversation('auto');return node;
-  }
-  function addCard(card){
-    if(!card)return;const wrap=document.createElement('a');wrap.className='chat-context-card entering';wrap.href=card.url||'#';
-    wrap.innerHTML=`<small>${esc(card.label||'متابعة')}</small><b>${esc(card.title||'')}</b><span>افتح الحالة ‹</span>`;
-    thread.appendChild(wrap);scrollConversation('smooth');
-  }
-  function showPulse(label,next,state='working'){
-    pulse.className='intent-pulse '+state;
-    pulseLabel.textContent=label; pulseNext.textContent=next;
-  }
-  function showExperience(experience){
-    if(!experience||['casual_chat','factual_question','comparison_recommendation'].includes(experience.mode))return pulse.classList.add('hidden');
-    showPulse(experience.label,experience.next_step,experience.state||'ready');
-  }
-  function setBusy(value){
-    busy=value;send.disabled=value;mic.disabled=value;attachBtn.disabled=value;
-    cancelTurn.classList.toggle('hidden',!value);
-  }
-  async function cancelActiveTurn(){
-    const current=activeTurn;if(!current||current.cancelling)return;
-    current.cancelling=true;cancelTurn.disabled=true;hint.textContent='بوقف الرسالة…';
-    try{
-      const r=await fetch(`/api/chat/turns/${encodeURIComponent(current.id)}/cancel`,{
-        method:'POST',cache:'no-store',credentials:'same-origin',headers:{'Accept':'application/json'}
-      });
-      const data=await r.json();
-      if(!r.ok)throw new Error(data.detail||`HTTP ${r.status}`);
-      if(!data.cancelled){hint.textContent='الرد خلص قبل ما الإيقاف يوصل.';return}
-      current.cancelled=true;current.controller.abort();current.wait.remove();current.userNode.remove();
-      storedRemove(PENDING_TURN_KEY);
-      if(!input.value.trim()){input.value=current.text;autoSize()}
-      attachments=current.files||[];renderAttachments();
-      showPulse('تم إيقاف الرسالة','عدّل الكتابة وابعتها من جديد','stopped');
-      hint.textContent='الرسالة الغلط مش هتدخل في سياق المحادثة.';
-    }catch(_){
-      hint.textContent='معرفتش أأكد الإيقاف؛ استنى النتيجة عشان ما نكررّش تنفيذ.';
-    }finally{current.cancelling=false;cancelTurn.disabled=false}
-  }
-  cancelTurn.addEventListener('click',cancelActiveTurn);
-  async function loadHistory(){
-    if(!threadId)return;
-    const requestedThread=threadId;
-    try{
-      const r=await fetch(`/api/conversations/${encodeURIComponent(threadId)}`,{cache:'no-store',credentials:'same-origin'});
-      if(requestedThread!==threadId)return;
-      if(!r.ok){if(r.status===404){storedRemove(THREAD_KEY);threadId=null}return}
-      const data=await r.json();data.messages.forEach(m=>addMessage(m.role,m.content,false));scrollConversation('auto');
-    }catch(e){hint.textContent='المحادثة المحفوظة مش متاحة دلوقتي.'}
-  }
-  async function initialize(){
-    if(!HAS_CUSTOMER){
-      if(!validCustomerRef(customerRef)){customerRef=newCustomerRef();if(customerRef)storedSet(CUSTOMER_KEY,customerRef)}
-      if(!customerRef){hint.textContent='المتصفح مش قادر ينشئ جلسة آمنة.';return false}
-      try{
-        const r=await fetch('/api/customer/session',{method:'POST',cache:'no-store',credentials:'same-origin',headers:{'X-Customer-Ref':customerRef,'Accept':'application/json'}});
-        if(!r.ok)throw new Error(`HTTP ${r.status}`);
-        storedRemove(CUSTOMER_KEY);customerRef=null;
-        location.replace(location.href);return false;
-      }catch(_){hint.textContent='تعذر بدء جلسة خاصة دلوقتي.';return false}
-    }
-    storedRemove(CUSTOMER_KEY);customerRef=null;
-    await loadHistory();
-    try{
-      const pending=JSON.parse(storedGet(PENDING_TURN_KEY)||'null');
-      if(pending&&validCustomerRef(pending.id)&&pending.text){input.value=pending.text;autoSize();hint.textContent='رسالتك محفوظة؛ ابعتها تاني لإكمال نفس المحاولة.'}
-    }catch(_){storedRemove(PENDING_TURN_KEY)}
-    return true;
-  }
-  async function handle(text){
-    text=(text||'').trim();if((!text&&!attachments.length)||busy)return;
-    const selectedAttachments=[...attachments];
-    if(!text)text='بص على المرفق ده وقولي محتواه.';
-    let pending=null;
-    try{pending=JSON.parse(storedGet(PENDING_TURN_KEY)||'null')}catch(_){storedRemove(PENDING_TURN_KEY)}
-    const samePending=pending&&validCustomerRef(pending.id)&&pending.text===text&&(!pending.thread_id||pending.thread_id===threadId);
-    const clientTurnId=samePending?pending.id:newCustomerRef();
-    if(!clientTurnId){hint.textContent='المتصفح مش قادر ينشئ رقم آمن للرسالة.';return}
-    if(selectedAttachments.length)storedRemove(PENDING_TURN_KEY);
-    else storedSet(PENDING_TURN_KEY,JSON.stringify({id:clientTurnId,text:text,thread_id:threadId}));
-    setBusy(true);
-    if(historyReady&&await historyReady===false){setBusy(false);return}
-    const userNode=addMessage('user',text+(selectedAttachments.length?`\n📎 ${selectedAttachments.map(f=>f.name).join('، ')}`:''));input.value='';attachments=[];renderAttachments();autoSize();hint.textContent='لحظة…';
-    pulse.classList.add('hidden');
-    const wait=thinking();
-    const controller=new AbortController();
-    const turnState={id:clientTurnId,text,files:selectedAttachments,controller,wait,userNode,cancelled:false,cancelling:false};activeTurn=turnState;
-    const timeout=setTimeout(()=>controller.abort(),45000);
-    const progress=setTimeout(()=>{hint.textContent='ثواني…'},1800);
-    const slower=setTimeout(()=>{hint.textContent='لسه شغال عليها…'},7000);
-    try{
-      const attachmentPayload=await Promise.all(selectedAttachments.map(filePayload));
-      const r=await fetch('/api/chat',{method:'POST',cache:'no-store',credentials:'same-origin',signal:controller.signal,headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({message:text,thread_id:threadId,client_turn_id:clientTurnId,locale:navigator.language||'ar-EG',attachments:attachmentPayload})});
-      const isJson=(r.headers.get('content-type')||'').includes('application/json');
-      const data=isJson?await r.json():null;wait.remove();if(!r.ok)throw new Error((data&&data.detail)||`HTTP ${r.status}`);
-      if(!data.message||!data.message.content)throw new Error('empty response');
-      threadId=data.thread_id;storedSet(THREAD_KEY,threadId);addMessage('assistant',data.message.content);addCard(data.card);
-      showExperience(data.experience);
-      storedRemove(PENDING_TURN_KEY);
-      hint.textContent=data.action.status==='EXECUTED'?'بدأت، وهتلاقي الحالة قدامك.':'قول اللي في بالك.';
-    }catch(e){
-      wait.remove();
-      if(turnState.cancelled)return;
-      const late=e&&e.name==='AbortError';
-      addMessage('assistant',late?'الرد اتأخر ومش هخمن النتيجة. حدّث الصفحة قبل ما تكرر أي طلب تنفيذي.':'الاتصال اتقطع قبل ما أعرف النتيجة. حدّث الصفحة قبل ما تكرر أي طلب تنفيذي.');
-      showPulse('التنفيذ متوقف','مفيش نتيجة اتسجلت من المحاولة دي','stopped');
-      hint.textContent=late?'تقدر تكمّل برسالة عادية.':'راجع الاتصال وجرب تاني.';
-      input.value=text;attachments=selectedAttachments;renderAttachments();autoSize();
-    }
-    finally{
-      clearTimeout(timeout);clearTimeout(progress);clearTimeout(slower);setBusy(false);if(activeTurn===turnState)activeTurn=null;
-      try{input.focus({preventScroll:true})}catch(_){input.focus()}
-    }
-  }
-  form.addEventListener('submit',e=>{e.preventDefault();handle(input.value)});
-  input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();handle(input.value)}});
-  function autoSize(){input.style.height='auto';input.style.height=Math.min(input.scrollHeight,128)+'px'}
-  input.addEventListener('input',autoSize);
-
-  const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(SpeechRecognition){
-    let active=false;
-    mic.addEventListener('click',()=>{
-      if(active)return;const r=new SpeechRecognition();r.lang=navigator.language||'ar-EG';r.interimResults=false;r.maxAlternatives=1;
-      active=true;mic.classList.add('listening');hint.textContent='سامعك…';
-      r.onresult=ev=>{input.value=ev.results[0][0].transcript.trim();autoSize()};
-      r.onerror=()=>{hint.textContent='الصوت مش متاح دلوقتي، اكتب عادي.'};
-      r.onend=()=>{active=false;mic.classList.remove('listening')};r.start();
-    });
-  }else mic.style.display='none';
-  historyReady=initialize();
+const conversation=document.getElementById('conversation'),thread=document.getElementById('chatThread'),empty=document.getElementById('emptyThread'),form=document.getElementById('chatForm'),input=document.getElementById('chatInput'),send=document.getElementById('sendBtn'),mic=document.getElementById('micBtn'),cancelTurn=document.getElementById('cancelTurnBtn'),attachBtn=document.getElementById('attachBtn'),attachmentInput=document.getElementById('attachmentInput'),attachmentTray=document.getElementById('attachmentTray'),hint=document.getElementById('composerHint'),pulse=document.getElementById('intentPulse'),pulseLabel=document.getElementById('intentLabel'),pulseNext=document.getElementById('intentNext');
+const THREAD_KEY='maak_conversation_thread_v1',CUSTOMER_KEY='maak_customer_ref_v1',PENDING_TURN_KEY='maak_pending_chat_turn_v1',HAS_CUSTOMER={{ 'true' if customer_ref_present else 'false' }},memoryStore={};
+function storedGet(k){try{return localStorage.getItem(k)}catch(_){return memoryStore[k]||null}} function storedSet(k,v){memoryStore[k]=v;try{localStorage.setItem(k,v)}catch(_){}} function storedRemove(k){delete memoryStore[k];try{localStorage.removeItem(k)}catch(_){}}
+let threadId=storedGet(THREAD_KEY),customerRef=storedGet(CUSTOMER_KEY),historyReady=null,busy=false,activeTurn=null,attachments=[];
+function renderAttachments(){attachmentTray.innerHTML='';attachmentTray.classList.toggle('hidden',!attachments.length);attachments.forEach((file,index)=>{const chip=document.createElement('span');chip.className='attachment-chip';chip.textContent=file.name;const remove=document.createElement('button');remove.type='button';remove.textContent='×';remove.onclick=()=>{attachments.splice(index,1);renderAttachments()};chip.appendChild(remove);attachmentTray.appendChild(chip)})}
+attachBtn.onclick=()=>attachmentInput.click();attachmentInput.onchange=()=>{for(const file of [...attachmentInput.files]){if(attachments.length>=3){hint.textContent='ممكن تبعت 3 مرفقات في الرسالة الواحدة.';break}if(file.size>10*1024*1024){hint.textContent=file.name+' أكبر من 10 ميجا.';continue}attachments.push(file)}attachmentInput.value='';renderAttachments()};
+function filePayload(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onerror=reject;r.onload=()=>resolve({name:file.name,mime_type:file.type||'application/octet-stream',data_url:String(r.result)});r.readAsDataURL(file)})}
+function validCustomerRef(v){return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v||'')} function newCustomerRef(){if(crypto&&crypto.randomUUID)return crypto.randomUUID();return null}
+function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))} function setDirection(n,t){n.dir=((t.match(/[\u0600-\u06ff]/g)||[]).length>=(t.match(/[A-Za-z]/g)||[]).length)?'rtl':'ltr'} function scrollConversation(b='auto'){requestAnimationFrame(()=>conversation.scrollTo({top:conversation.scrollHeight,behavior:b}))}
+function addMessage(role,text,animate=true){empty.classList.add('hidden');const w=document.createElement('div');w.className='chat-message '+role+(animate?' entering':'');w.innerHTML=role==='assistant'?`<div class="assistant-avatar">م</div><div class="bubble">${esc(text)}</div>`:`<div class="bubble">${esc(text)}</div>`;setDirection(w.querySelector('.bubble'),text);thread.appendChild(w);if(animate)scrollConversation(role==='assistant'?'smooth':'auto');return w}
+function thinking(){const n=document.createElement('div');n.className='chat-message assistant entering thinking-message';n.innerHTML='<div class="assistant-avatar">م</div><div class="bubble"><span class="thinking-inline"><i></i><i></i><i></i></span></div>';thread.appendChild(n);scrollConversation();return n}
+function addCard(c){if(!c)return;const w=document.createElement('a');w.className='chat-context-card entering';w.href=c.url||'#';w.innerHTML=`<small>${esc(c.label||'متابعة')}</small><b>${esc(c.title||'')}</b><span>افتح الحالة ‹</span>`;thread.appendChild(w);scrollConversation('smooth')}
+function showPulse(l,n,s='working'){pulse.className='intent-pulse '+s;pulseLabel.textContent=l;pulseNext.textContent=n} function showExperience(x){if(!x||['casual_chat','factual_question','comparison_recommendation'].includes(x.mode))return pulse.classList.add('hidden');showPulse(x.label,x.next_step,x.state||'ready')} function setBusy(v){busy=v;send.disabled=v;mic.disabled=v;attachBtn.disabled=v;cancelTurn.classList.toggle('hidden',!v)}
+async function cancelActiveTurn(){const c=activeTurn;if(!c||c.cancelling)return;c.cancelling=true;try{const r=await fetch('/api/chat/turns/'+encodeURIComponent(c.id)+'/cancel',{method:'POST',cache:'no-store',credentials:'same-origin',headers:{Accept:'application/json'}}),d=await r.json();if(!r.ok)throw Error();if(d.cancelled){c.cancelled=true;c.controller.abort();c.wait.remove();c.userNode.remove();storedRemove(PENDING_TURN_KEY);input.value=c.text;attachments=c.files||[];renderAttachments();autoSize();showPulse('تم إيقاف الرسالة','عدّلها وابعتها من جديد','stopped')}}catch(_){hint.textContent='معرفتش أأكد الإيقاف.'}finally{c.cancelling=false}} cancelTurn.onclick=cancelActiveTurn;
+async function loadHistory(){if(!threadId)return;try{const r=await fetch('/api/conversations/'+encodeURIComponent(threadId),{cache:'no-store',credentials:'same-origin'});if(!r.ok){if(r.status===404){storedRemove(THREAD_KEY);threadId=null}return}const d=await r.json();d.messages.forEach(m=>addMessage(m.role,m.content,false));scrollConversation()}catch(_){hint.textContent='المحادثة المحفوظة مش متاحة دلوقتي.'}}
+async function initialize(){if(!HAS_CUSTOMER){if(!validCustomerRef(customerRef)){customerRef=newCustomerRef();if(customerRef)storedSet(CUSTOMER_KEY,customerRef)}if(!customerRef)return false;try{const r=await fetch('/api/customer/session',{method:'POST',cache:'no-store',credentials:'same-origin',headers:{'X-Customer-Ref':customerRef,Accept:'application/json'}});if(!r.ok)throw Error();storedRemove(CUSTOMER_KEY);location.replace(location.href);return false}catch(_){hint.textContent='تعذر بدء جلسة خاصة دلوقتي.';return false}}storedRemove(CUSTOMER_KEY);await loadHistory();return true}
+async function handle(text){text=(text||'').trim();if((!text&&!attachments.length)||busy)return;const files=[...attachments];if(!text)text='بص على المرفق ده وقولي محتواه.';const clientTurnId=newCustomerRef();if(!clientTurnId)return;storedSet(PENDING_TURN_KEY,JSON.stringify({id:clientTurnId,text,thread_id:threadId}));setBusy(true);if(historyReady&&await historyReady===false){setBusy(false);return}const userNode=addMessage('user',text+(files.length?'\n📎 '+files.map(f=>f.name).join('، '):''));input.value='';attachments=[];renderAttachments();autoSize();hint.textContent='معاك…';pulse.classList.add('hidden');const wait=thinking(),controller=new AbortController(),turnState={id:clientTurnId,text,files,controller,wait,userNode,cancelled:false};activeTurn=turnState;const timeout=setTimeout(()=>controller.abort(),45000);try{const payload=await Promise.all(files.map(filePayload));const r=await fetch('/api/chat',{method:'POST',cache:'no-store',credentials:'same-origin',signal:controller.signal,headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({message:text,thread_id:threadId,client_turn_id:clientTurnId,locale:navigator.language||'ar-EG',attachments:payload})});const d=await r.json();wait.remove();if(!r.ok||!d.message?.content)throw Error();threadId=d.thread_id;storedSet(THREAD_KEY,threadId);addMessage('assistant',d.message.content);addCard(d.card);showExperience(d.experience);storedRemove(PENDING_TURN_KEY);hint.textContent=d.action?.status==='EXECUTED'?'بدأت، وهتلاقي الحالة قدامك.':'معاك.'}catch(e){wait.remove();if(!turnState.cancelled){addMessage('assistant',e?.name==='AbortError'?'الرد اتأخر ومش هخمن النتيجة.':'الاتصال اتقطع قبل ما أعرف النتيجة.');hint.textContent='جرّب تاني.';input.value=text;attachments=files;renderAttachments();autoSize()}}finally{clearTimeout(timeout);setBusy(false);if(activeTurn===turnState)activeTurn=null}}
+form.onsubmit=e=>{e.preventDefault();handle(input.value)};input.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();handle(input.value)}};function autoSize(){input.style.height='auto';input.style.height=Math.min(input.scrollHeight,128)+'px'}input.oninput=autoSize;
+const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;if(SpeechRecognition){mic.onclick=()=>{const r=new SpeechRecognition();r.lang=navigator.language||'ar-EG';r.interimResults=false;mic.classList.add('listening');hint.textContent='سامعك…';r.onresult=e=>{input.value=e.results[0][0].transcript.trim();autoSize()};r.onend=()=>mic.classList.remove('listening');r.start()}}else mic.style.display='none';historyReady=initialize();
 })();
-</script>
-</body></html>
+</script></body></html>
