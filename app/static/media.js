@@ -10,8 +10,8 @@
     .conversation-hero,.chat-thread{min-width:0!important;width:100%!important;max-width:100%!important}
     .chat-thread{gap:4px!important}
     .chat-message{width:100%!important;min-width:0!important;max-width:100%!important;direction:ltr!important;margin:10px 0!important;padding:0!important}
-    .chat-message.user{justify-content:flex-end!important;padding:0!important}
-    .chat-message.assistant{justify-content:flex-start!important;padding:0!important}
+    .chat-message.user{justify-content:flex-start!important;padding:0!important}
+    .chat-message.assistant{justify-content:flex-end!important;padding:0!important}
     .chat-message .bubble{min-width:0!important;max-width:min(82%,560px)!important;overflow-wrap:anywhere!important;word-break:break-word!important;white-space:pre-wrap!important}
     .chat-context-card,.chat-image-grid,.maak-choice-bar{max-width:100%!important;margin-inline:0!important}
     body.has-conversation .home-cases,body.has-conversation .quiet-card{display:none!important}
