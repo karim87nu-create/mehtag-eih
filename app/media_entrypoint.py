@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 import re
 
@@ -40,6 +41,12 @@ _EVERYDAY_WANT_RE = re.compile(
     r"افطر|أفطر|اتغدى|أتغدى|اتعشى|أتعشى|اكل حاجه|آكل حاجة)(?:\s|$)",
     re.IGNORECASE,
 )
+_LEGACY_DRAFT_PROMPTS = (
+    "لما تخلص قول",
+    "راجع التفاصيل ثم قل",
+    "كمّل المواصفات والميزانية والمنطقة",
+    "كمل المواصفات والميزانية والمنطقة",
+)
 
 
 def _is_media_request(text: str) -> bool:
@@ -60,6 +67,20 @@ def _request_seed_without_media(text: str) -> bool:
 patched_module._is_media_request = _is_media_request
 patched_module._is_request_seed = _request_seed_without_media
 
+# Do not let drafts created by the old form-like flow leak into the new guided flow.
+def _without_legacy_draft_history(context):
+    cutoff = -1
+    for index, item in enumerate(context.history or []):
+        if str(item.get("role") or "") != "assistant":
+            continue
+        text = patched_module._clean(str(item.get("content") or ""))
+        if any(marker in text for marker in _LEGACY_DRAFT_PROMPTS):
+            cutoff = index
+    if cutoff < 0:
+        return context
+    return replace(context, history=list(context.history[cutoff + 1 :]))
+
+
 # A live draft is a conversation, not a bag that swallows every following turn.
 # Keep only answers that are recognisable as request constraints. In particular,
 # phrases such as "بحب جديد" or an objection must not become a condition merely
@@ -73,7 +94,8 @@ def _safe_condition(text: str) -> bool:
 
 
 def _guided_segment(context):
-    raw = _original_draft_segment(context)
+    clean_context = _without_legacy_draft_history(context)
+    raw = _original_draft_segment(clean_context)
     if not raw:
         return raw
     kept = [raw[0]]
@@ -116,6 +138,7 @@ class MediaAwareProvider:
         self.degraded = bool(getattr(wrapped, "degraded", False))
 
     async def respond(self, context):
+        context = _without_legacy_draft_history(context)
         if _is_media_request(context.message):
             return ProviderReply(
                 "تمام، بجيبلك الصور المناسبة دلوقتي.",
@@ -133,7 +156,7 @@ class MediaAwareProvider:
         classifier = getattr(self.wrapped, "classify_route", None)
         if classifier is None:
             return None
-        return await classifier(context, draft)
+        return await classifier(_without_legacy_draft_history(context), draft)
 
 
 _media_provider = MediaAwareProvider(patched_module.main_module.conversation_provider)
