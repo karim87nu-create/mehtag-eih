@@ -9,12 +9,20 @@ from app.media_entrypoint import DynamicConversationProvider, app
 def test_home_cache_busts_media_script_and_retry_is_supported():
     response = TestClient(app).get("/")
     assert response.status_code == 200
-    assert "/static/media.js?v=196a249-media-fix" in response.text
+    assert "/static/media.js?v=7db23a7-stable" in response.text
+    assert "/static/media-hotfix.js?v=7db23a7-stable" in response.text
 
     script = TestClient(app).get("/static/media.js").text
     assert "lastImageQuery" in script
     assert "followupCue.test(text)" in script
     assert "مش هقول إن الصور جاهزة وهي مش ظاهرة" in script
+
+
+def test_response_timing_is_visible_without_changing_the_payload():
+    response = TestClient(app).get("/")
+    assert response.status_code == 200
+    assert float(response.headers["X-Maak-Response-Ms"]) >= 0
+    assert response.headers["Server-Timing"].startswith("app;dur=")
 
 
 def test_where_followup_after_image_request_does_not_attach_old_request():
@@ -31,4 +39,4 @@ def test_where_followup_after_image_request_does_not_attach_old_request():
 
     assert reply.intent.value == "GENERAL_QUESTION"
     assert reply.action.type.value == "NONE"
-    assert "مش هربط" in reply.text
+    assert "هعيد عرض نفس الصور" in reply.text

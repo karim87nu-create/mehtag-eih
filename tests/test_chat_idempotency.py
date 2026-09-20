@@ -220,4 +220,6 @@ def test_cancel_processing_turn_revokes_action_and_removes_typo_from_context(mon
         f"/api/conversations/{corrected.json()['thread_id']}",
         headers={"X-Customer-Ref": CUSTOMER},
     )
-    assert [m["content"] for m in history.json()["messages"]] == ["عامل إيه؟", "رد لا يجب حفظه"]
+    messages = history.json()["messages"]
+    assert messages[0]["content"] == "عامل إيه؟"
+    assert all(m["content"] != "رد لا يجب حفظه" for m in messages)

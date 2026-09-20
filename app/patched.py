@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 
+from . import conversation as conversation_module
 from . import main as main_module
 from .conversation import ActionProposal, ActionType, Intent, ProviderReply, ResponseStyle
 from .intent_router import Route, RouteDecision, route_turn, semantic_decision
@@ -444,6 +445,17 @@ def _draft_aware_policy(reply, context):
     # A bare explicit start command executes the accumulated draft, not the
     # single word "ابدأ" and not merely the immediately preceding fragment.
     if draft and _is_execute_control(current):
+        if not conversation_module._request_target_present(draft):
+            return ProviderReply(
+                safe.text,
+                Intent.NEW_REQUEST,
+                1.0,
+                safe.style,
+                ActionProposal(ActionType.CREATE_REQUEST, False, 1.0, payload={"text": draft}),
+                provider=_provider.name,
+                model=getattr(safe, "model", None),
+                degraded=_provider.degraded,
+            )
         return ProviderReply(
             f"تمام، هبدأ على الطلب ده: {draft}.",
             Intent.NEW_REQUEST,
@@ -478,12 +490,19 @@ def _draft_aware_policy(reply, context):
         # card to the new draft. Mark the new draft as NEW_REQUEST while still
         # proposing no action, so the UI cannot imply we are editing the old case.
         draft_intent = Intent.NEW_REQUEST if first or context.active_cases else Intent.CONTINUATION
+        # Keep a concrete model question for an incomplete first seed. The
+        # deterministic draft copy is only needed for fast-path placeholders;
+        # replacing a useful "what exactly?" question with generic copy makes
+        # the conversation feel stuck even though the model answered correctly.
+        draft_reply = _draft_reply_text(context, draft, first)
+        if first and safe.text and safe.provider not in {"draft-fast-path", "router-fast-path"}:
+            draft_reply = safe.text
         return ProviderReply(
-            _draft_reply_text(context, draft, first),
+            draft_reply,
             draft_intent,
             1.0,
             safe.style,
-            ActionProposal(ActionType.NONE, False, 1.0),
+            ActionProposal(ActionType.CREATE_REQUEST, False, 1.0, payload={"text": draft}),
             provider=_provider.name,
             model=getattr(safe, "model", None),
             degraded=_provider.degraded,

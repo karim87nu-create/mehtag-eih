@@ -85,6 +85,19 @@ def route_turn(text: str, *, draft_exists: bool=False) -> RouteDecision:
     if "?" in text or "؟" in text or token_set & {"ليه","ازاي","ايه","مين","امتي","what","why","how","who","when","which"}: return RouteDecision(Route.FACTUAL_QUESTION,.93)
     # A possible request seed is semantic, not authorization. Keep this generic.
     if re.search(r"(?:^|\s)(?:عايز|عاوز|محتاج|محتاجه|عايزه|عاوزه|بدور\s+عل[ىي]|i\s+want|i\s+need|looking\s+for)(?:\s|$)",value): return RouteDecision(Route.REQUEST_SEED,.82,deterministic=False)
+    # Only high-signal constraints are deterministic while a request draft is
+    # active. This keeps product codes, explicit condition choices and known
+    # areas attached to the draft without turning arbitrary short chat into data.
+    if draft_exists:
+        compact = value.replace(" ", "")
+        model_code = bool(re.fullmatch(r"(?=.*[a-z])(?=.*\d)[a-z0-9._-]{2,30}", compact))
+        explicit_choice = value in {"جديد", "مستعمل", "كاش", "تقسيط", "توصيل", "استلام"}
+        explicit_area = bool(re.fullmatch(
+            r"(?:في|ل|الى|الي)\s+(?:مصر الجديده|مدينه نصر|التجمع|القاهره الجديده|مدينتي|المعادي|الزمالك|الدقي|الهرم|الجيزه)",
+            value,
+        ))
+        if model_code or explicit_choice or explicit_area:
+            return RouteDecision(Route.REQUEST_DETAIL,.97,fits_active_draft=True)
     # Crucial: while a draft exists, unknown short/numeric/place/model turns are
     # intentionally NOT classified here. Gemini decides whether they actually
     # answer the live request. This prevents arbitrary chat becoming draft data.

@@ -17,7 +17,7 @@ def test_home_waits_for_customer_to_start():
     reset()
     r = client.get("/")
     assert r.status_code == 200
-    assert "اكتب أو اتكلم" in r.text
+    assert "قول اللي محتاجه" in r.text
     assert "تمام فهمتك" not in r.text
     assert "detectCategory" not in r.text
     assert "AbortController" in r.text
