@@ -16,7 +16,7 @@ from .db import Base, engine, SessionLocal
 from .migrations import migrate_customer_ownership_schema
 from .models import Request, Business, MerchantLink, Offer, Event, ExecutionCase, CaseEvent, ExternalCase, MemoryFact, DetectedTransaction, TransactionEvent, FollowupRule, FollowupTask, LearnedPreference, BusinessPerformance, OfferAmendment, IssueRecord, CustomerRule, CapabilitySignal, ReachAttempt, BusinessActivation, IntegrationEndpoint, TransportDelivery, PaymentIntent, ConsentRecord, AuditRecord, MobileSourceEvent, ConversationThread, ConversationMessage, ConversationTurn, ConversationCaseLink, ConversationAction
 from .services import understand_request, discover_businesses, build_reachability, new_token
-from .conversation import ActionType, TurnContext, build_provider, enforce_case_turn_policy, gate_action
+from .conversation import ActionProposal, ActionType, Intent, ProviderReply, ResponseStyle, TurnContext, build_provider, enforce_case_turn_policy, gate_action
 from .case_actions import case_status_card, execute_case_action
 from .execution_models import ExecutionNotice
 from .locale import resolve_locale
@@ -1575,6 +1575,118 @@ class ChatTurnInput(BaseModel):
     attachments: list[dict[str, str]] = Field(default_factory=list, max_length=3)
 
 
+_MEMORY_SAVE_RE = re.compile(
+    r"^\s*(?:افتكر|إفتكر|خلي\s+بالك|خلّي\s+بالك|سجل\s+عندك|سجّل\s+عندك)\s+(?:ان|إن|اني|إني)\s+(.+?)\s*[.!؟?]*$",
+    re.IGNORECASE,
+)
+_MEMORY_FORGET_RE = re.compile(
+    r"^\s*(?:انسى|إنسى|انسي|امسح|إمسح)\s+(?:ان|إن|معلومة\s+ان|معلومة\s+إن)?\s*(.+?)\s*[.!؟?]*$",
+    re.IGNORECASE,
+)
+_MEMORY_REPLACE_RE = re.compile(
+    r"^\s*بدل\s+ما\s+تفتكر\s+(.+?)\s*[،,]?\s*(?:افتكر|إفتكر)\s+(?:ان|إن)?\s*(.+?)\s*[.!؟?]*$",
+    re.IGNORECASE,
+)
+_MEMORY_QUERY_RE = re.compile(
+    r"^\s*(?:انت|إنت)?\s*(?:فاكر|عارف)\s+عني\s+(?:ايه|إيه|ماذا)\s*[؟?!.]*$",
+    re.IGNORECASE,
+)
+
+
+def _memory_normalize(value: str) -> str:
+    text = " ".join(str(value or "").strip().split()).casefold()
+    return text.translate(str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ى": "ي", "ة": "ه"}))
+
+
+def _explicit_memory_key(value: str) -> str:
+    normalized = _memory_normalize(value)
+    if re.match(r"^(?:انا\s+)?اسمي\s+", normalized):
+        return "profile:name"
+    return "explicit:" + hashlib.sha256(normalized.encode()).hexdigest()[:16]
+
+
+def confirmed_chat_memories(db: Session, customer_ref: str) -> list[dict[str, str]]:
+    facts = db.query(MemoryFact).filter(
+        MemoryFact.customer_ref == customer_ref,
+        MemoryFact.memory_type == "customer",
+        MemoryFact.source_type == "chat_explicit",
+    ).order_by(MemoryFact.id.desc()).limit(12).all()
+    preferences = db.query(LearnedPreference).filter(
+        LearnedPreference.customer_ref == customer_ref,
+        LearnedPreference.status == "CONFIRMED",
+    ).order_by(LearnedPreference.id.desc()).limit(8).all()
+    memories = [{"type": "fact", "key": row.key, "value": row.value} for row in facts]
+    memories.extend(
+        {"type": "preference", "key": row.preference_key, "value": row.preference_value}
+        for row in preferences
+    )
+    return memories[:12]
+
+
+def _delete_matching_chat_memories(db: Session, customer_ref: str, needle: str) -> int:
+    normalized = _memory_normalize(needle)
+    if not normalized:
+        return 0
+    rows = db.query(MemoryFact).filter(
+        MemoryFact.customer_ref == customer_ref,
+        MemoryFact.memory_type == "customer",
+        MemoryFact.source_type == "chat_explicit",
+    ).all()
+    matches = [row for row in rows if normalized in _memory_normalize(row.value) or _memory_normalize(row.value) in normalized]
+    for row in matches:
+        db.delete(row)
+    return len(matches)
+
+
+def apply_chat_memory_command(db: Session, customer_ref: str, text: str, source_id: int) -> str | None:
+    replace_match = _MEMORY_REPLACE_RE.fullmatch(text)
+    if replace_match:
+        old_value, new_value = (" ".join(part.split()).strip(" .،") for part in replace_match.groups())
+        removed = _delete_matching_chat_memories(db, customer_ref, old_value)
+        # Flush removals before inserting a correction that may reuse the same
+        # semantic key (for example profile:name). Otherwise SQLAlchemy can
+        # reconcile the pending delete and insert as removal of both rows.
+        db.flush()
+        key = _explicit_memory_key(new_value)
+        db.query(MemoryFact).filter(
+            MemoryFact.customer_ref == customer_ref,
+            MemoryFact.memory_type == "customer",
+            MemoryFact.source_type == "chat_explicit",
+            MemoryFact.key == key,
+        ).delete(synchronize_session=False)
+        db.add(MemoryFact(customer_ref=customer_ref, memory_type="customer", key=key, value=new_value,
+                          source_type="chat_explicit", source_id=source_id, confidence=1.0))
+        return "صححت المعلومة وهاعتمد الجديدة من دلوقتي." if removed else "سجلت المعلومة الجديدة، وماكانش عندي تطابق واضح للمعلومة القديمة."
+
+    save_match = _MEMORY_SAVE_RE.fullmatch(text)
+    if save_match:
+        value = " ".join(save_match.group(1).split()).strip(" .،")[:500]
+        key = _explicit_memory_key(value)
+        db.query(MemoryFact).filter(
+            MemoryFact.customer_ref == customer_ref,
+            MemoryFact.memory_type == "customer",
+            MemoryFact.source_type == "chat_explicit",
+            MemoryFact.key == key,
+        ).delete(synchronize_session=False)
+        db.add(MemoryFact(customer_ref=customer_ref, memory_type="customer", key=key, value=value,
+                          source_type="chat_explicit", source_id=source_id, confidence=1.0))
+        return "افتكرتها، وهستخدمها لما تكون ليها علاقة بكلامنا."
+
+    forget_match = _MEMORY_FORGET_RE.fullmatch(text)
+    if forget_match:
+        needle = " ".join(forget_match.group(1).split()).strip(" .،")
+        removed = _delete_matching_chat_memories(db, customer_ref, needle)
+        return "نسيت المعلومة دي." if removed else "ملقتش المعلومة دي ضمن الحاجات المحفوظة عنك."
+
+    if _MEMORY_QUERY_RE.fullmatch(text):
+        memories = confirmed_chat_memories(db, customer_ref)
+        if not memories:
+            return "لسه مفيش معلومات مؤكدة محفوظة عنك."
+        values = "\n".join(f"- {item['value']}" for item in memories)
+        return "المعلومات المؤكدة اللي فاكرها عنك:\n" + values
+    return None
+
+
 def linked_case_context(db: Session, thread_id: str, customer_ref: str | None = None):
     thread = db.query(ConversationThread).filter(ConversationThread.id == thread_id).first()
     if not thread:
@@ -1963,18 +2075,27 @@ async def chat_turn(payload: ChatTurnInput, request: FastAPIRequest, db: Session
     ).order_by(ConversationMessage.id.desc()).limit(20).all()
     history = [{"role": row.role.lower(), "content": row.content} for row in reversed(history_rows)]
     active_cases = linked_case_context(db, thread.id, customer_ref)
-    turn_context = TurnContext(text, history, thread.locale, active_cases, attachments)
-    try:
-        reply = await conversation_provider.respond(turn_context)
-    except Exception:
-        db.rollback()
-        if turn:
-            db.refresh(turn)
-            if turn.lease_token == lease_token and turn.status == "PROCESSING":
-                turn.status = "FAILED"
-                turn.updated_at = datetime.utcnow()
-                db.commit()
-        raise
+    memory_reply = apply_chat_memory_command(db, customer_ref, text, user_message.id)
+    memories = confirmed_chat_memories(db, customer_ref)
+    turn_context = TurnContext(text, history, thread.locale, active_cases, attachments, memories)
+    if memory_reply is not None:
+        reply = ProviderReply(
+            memory_reply, Intent.GENERAL_QUESTION, 1.0, ResponseStyle(),
+            ActionProposal(ActionType.NONE, False, 1.0),
+            provider="maak-memory", model=None, degraded=False,
+        )
+    else:
+        try:
+            reply = await conversation_provider.respond(turn_context)
+        except Exception:
+            db.rollback()
+            if turn:
+                db.refresh(turn)
+                if turn.lease_token == lease_token and turn.status == "PROCESSING":
+                    turn.status = "FAILED"
+                    turn.updated_at = datetime.utcnow()
+                    db.commit()
+            raise
 
     # A slow superseded worker must never cross the business-action boundary.
     if turn:

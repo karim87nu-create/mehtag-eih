@@ -77,6 +77,7 @@ class RemoteMaakBrain(ConversationProvider):
             "history": context.history[-12:],
             "locale": context.locale,
             "active_cases": context.active_cases,
+            "memories": context.memories[:12],
             "attachments": context.attachments[:3],
         }
 

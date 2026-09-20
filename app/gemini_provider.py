@@ -70,14 +70,14 @@ request_detail: only when this turn truly answers, constrains or corrects the ac
 request_execute: only explicit permission to start. request_cancel: explicit cancellation.
 A report/file/spreadsheet/document turn is a file conversation, not a request-status turn. A phrase like 'فين التقرير' refers to the report context unless the user explicitly says they mean an order/request status.
 response is the actual user-facing reply for this turn. If a real request is being formed, do not ask for more merely because it could be useful. Ask at most ONE specific question only when a concrete fact is genuinely needed to move forward; otherwise answer or continue naturally from context. If enough is known, naturally say it is ready and invite the user to start. If the turn is side conversation, answer it normally without pretending it changed the request. Use warm natural Egyptian Arabic, concise and non-form-like. Never invent facts or execution."""
-        payload={"message":context.message,"recent_history":context.history[-10:],"active_request_draft":draft,"active_cases":context.active_cases,"locale":context.locale,"attachments":[{"name":x.get("name"),"mime_type":x.get("mime_type")} for x in context.attachments[:3]]}
+        payload={"message":context.message,"recent_history":context.history[-10:],"active_request_draft":draft,"active_cases":context.active_cases,"memories":context.memories[:12],"locale":context.locale,"attachments":[{"name":x.get("name"),"mime_type":x.get("mime_type")} for x in context.attachments[:3]]}
         data = await self._generate_json(system,[{"text":json.dumps(payload,ensure_ascii=False)}],500)
         setattr(context, "semantic_response", str(data.get("response") or "").strip())
         setattr(context, "semantic_payload", data)
         return data
 
     async def respond(self, context) -> ProviderReply:
-        context_payload={"message":context.message,"history":context.history[-12:],"locale":context.locale,"active_cases":context.active_cases,"attachments":[{"name":x.get("name"),"mime_type":x.get("mime_type")} for x in context.attachments[:3]]}
+        context_payload={"message":context.message,"history":context.history[-12:],"locale":context.locale,"active_cases":context.active_cases,"memories":context.memories[:12],"attachments":[{"name":x.get("name"),"mime_type":x.get("mime_type")} for x in context.attachments[:3]]}
         parts=[{"text":json.dumps(context_payload,ensure_ascii=False)}]
         for attachment in context.attachments[:3]:
             part=self._inline_part(attachment)
