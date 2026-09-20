@@ -1592,6 +1592,32 @@ _MEMORY_QUERY_RE = re.compile(
     re.IGNORECASE,
 )
 
+_AUTO_MEMORY_SOURCES = ("chat_explicit", "chat_auto")
+_AUTO_NAME_RE = re.compile(
+    r"^\s*(?:انا\s+|أنا\s+)?اسمي\s+([\u0600-\u06ffA-Za-z][\u0600-\u06ffA-Za-z .'-]{1,59})\s*[.!؟?]*$",
+    re.IGNORECASE,
+)
+_AUTO_RESPONSE_STYLE_RE = re.compile(
+    r"^\s*(?:انا\s+|أنا\s+)?(?:دايم[ًاا]?\s+|عادة\s+)?(?:بفضل|بفضّل|احب|أحب)\s+(?:ان\s+|إن\s+)?(?:ال)?رد(?:ود)?\s+(المختصر(?:ة)?|المفصل(?:ة)?)\s*[.!؟?]*$",
+    re.IGNORECASE,
+)
+_AUTO_DIALECT_RE = re.compile(
+    r"^\s*(?:من\s+فضلك\s+)?(?:كلمني|كلّمني|اتكلم\s+معايا|اتكلّم\s+معايا)\s+ب(المصري|العربي|العربية|الانجليزي|الإنجليزي|الانجليزية|الإنجليزية)\s*[.!؟?]*$",
+    re.IGNORECASE,
+)
+_AUTO_HABITUAL_PREFERENCE_RE = re.compile(
+    r"^\s*(?:انا\s+|أنا\s+)?(?:دايم[ًاا]?|عادة)\s+(?:بفضل|بفضّل|احب|أحب)\s+(.+?)\s*[.!؟?]*$",
+    re.IGNORECASE,
+)
+_TEMPORARY_MEMORY_RE = re.compile(
+    r"(?:النهارده|اليوم|دلوقتي|حالي[ًاا]|المرة\s+دي|المره\s+دي|مؤقت[ًاا]|الطلب\s+ده|المحادثة\s+دي)",
+    re.IGNORECASE,
+)
+_SENSITIVE_MEMORY_RE = re.compile(
+    r"(?:كلمة\s*السر|باسورد|password|رمز\s*(?:التحقق|الدخول)|otp|cvv|pin|رقم\s*(?:البطاقة|البطاقه|الحساب|القومي|الهويه|الهوية)|iban|ايبان|عنواني|رقم\s*تليفوني|رقم\s*هاتفي|\b\d{4,}\b|\S+@\S+)",
+    re.IGNORECASE,
+)
+
 
 def _memory_normalize(value: str) -> str:
     text = " ".join(str(value or "").strip().split()).casefold()
@@ -1609,7 +1635,7 @@ def confirmed_chat_memories(db: Session, customer_ref: str) -> list[dict[str, st
     facts = db.query(MemoryFact).filter(
         MemoryFact.customer_ref == customer_ref,
         MemoryFact.memory_type == "customer",
-        MemoryFact.source_type == "chat_explicit",
+        MemoryFact.source_type.in_(_AUTO_MEMORY_SOURCES),
     ).order_by(MemoryFact.id.desc()).limit(12).all()
     preferences = db.query(LearnedPreference).filter(
         LearnedPreference.customer_ref == customer_ref,
@@ -1630,12 +1656,85 @@ def _delete_matching_chat_memories(db: Session, customer_ref: str, needle: str) 
     rows = db.query(MemoryFact).filter(
         MemoryFact.customer_ref == customer_ref,
         MemoryFact.memory_type == "customer",
-        MemoryFact.source_type == "chat_explicit",
+        MemoryFact.source_type.in_(_AUTO_MEMORY_SOURCES),
     ).all()
     matches = [row for row in rows if normalized in _memory_normalize(row.value) or _memory_normalize(row.value) in normalized]
     for row in matches:
         db.delete(row)
     return len(matches)
+
+
+def _upsert_chat_memory(
+    db: Session, customer_ref: str, key: str, value: str, source_id: int,
+    *, source_type: str, confidence: float,
+) -> None:
+    db.query(MemoryFact).filter(
+        MemoryFact.customer_ref == customer_ref,
+        MemoryFact.memory_type == "customer",
+        MemoryFact.source_type.in_(_AUTO_MEMORY_SOURCES),
+        MemoryFact.key == key,
+    ).delete(synchronize_session=False)
+    db.add(MemoryFact(
+        customer_ref=customer_ref, memory_type="customer", key=key, value=value,
+        source_type=source_type, source_id=source_id, confidence=confidence,
+    ))
+
+
+def learn_safe_chat_memory(db: Session, customer_ref: str, text: str, source_id: int) -> bool:
+    """Learn only unambiguous, durable, non-sensitive facts from natural chat."""
+    compact = " ".join(str(text or "").strip().split())
+    if not compact or len(compact) > 180:
+        return False
+    if "?" in compact or "؟" in compact:
+        return False
+    if _TEMPORARY_MEMORY_RE.search(compact) or _SENSITIVE_MEMORY_RE.search(compact):
+        return False
+
+    name_match = _AUTO_NAME_RE.fullmatch(compact)
+    if name_match:
+        name = name_match.group(1).strip(" .،")
+        normalized_name = _memory_normalize(name)
+        if (any(char.isdigit() for char in name) or len(name.split()) > 4
+                or normalized_name.startswith(("مش ", "ايه", "ماذا"))):
+            return False
+        _upsert_chat_memory(
+            db, customer_ref, "profile:name", f"اسمي {name}", source_id,
+            source_type="chat_auto", confidence=0.99,
+        )
+        return True
+
+    style_match = _AUTO_RESPONSE_STYLE_RE.fullmatch(compact)
+    if style_match:
+        style = _memory_normalize(style_match.group(1))
+        value = "بفضل الرد المختصر" if "مختصر" in style else "بفضل الرد المفصل"
+        _upsert_chat_memory(
+            db, customer_ref, "preference:response_style", value, source_id,
+            source_type="chat_auto", confidence=0.98,
+        )
+        return True
+
+    dialect_match = _AUTO_DIALECT_RE.fullmatch(compact)
+    if dialect_match:
+        dialect = _memory_normalize(dialect_match.group(1))
+        value = "أفضل أن تكلمني بالمصري" if dialect == "المصري" else f"أفضل أن تكلمني ب{dialect}"
+        _upsert_chat_memory(
+            db, customer_ref, "preference:language", value, source_id,
+            source_type="chat_auto", confidence=0.98,
+        )
+        return True
+
+    habitual_match = _AUTO_HABITUAL_PREFERENCE_RE.fullmatch(compact)
+    if habitual_match:
+        subject = habitual_match.group(1).strip(" .،")
+        if 2 <= len(subject) <= 100 and not _SENSITIVE_MEMORY_RE.search(subject):
+            normalized = _memory_normalize(subject)
+            key = "preference:habit:" + hashlib.sha256(normalized.encode()).hexdigest()[:16]
+            _upsert_chat_memory(
+                db, customer_ref, key, f"عادة بفضل {subject}", source_id,
+                source_type="chat_auto", confidence=0.95,
+            )
+            return True
+    return False
 
 
 def apply_chat_memory_command(db: Session, customer_ref: str, text: str, source_id: int) -> str | None:
@@ -1648,28 +1747,16 @@ def apply_chat_memory_command(db: Session, customer_ref: str, text: str, source_
         # reconcile the pending delete and insert as removal of both rows.
         db.flush()
         key = _explicit_memory_key(new_value)
-        db.query(MemoryFact).filter(
-            MemoryFact.customer_ref == customer_ref,
-            MemoryFact.memory_type == "customer",
-            MemoryFact.source_type == "chat_explicit",
-            MemoryFact.key == key,
-        ).delete(synchronize_session=False)
-        db.add(MemoryFact(customer_ref=customer_ref, memory_type="customer", key=key, value=new_value,
-                          source_type="chat_explicit", source_id=source_id, confidence=1.0))
+        _upsert_chat_memory(db, customer_ref, key, new_value, source_id,
+                            source_type="chat_explicit", confidence=1.0)
         return "صححت المعلومة وهاعتمد الجديدة من دلوقتي." if removed else "سجلت المعلومة الجديدة، وماكانش عندي تطابق واضح للمعلومة القديمة."
 
     save_match = _MEMORY_SAVE_RE.fullmatch(text)
     if save_match:
         value = " ".join(save_match.group(1).split()).strip(" .،")[:500]
         key = _explicit_memory_key(value)
-        db.query(MemoryFact).filter(
-            MemoryFact.customer_ref == customer_ref,
-            MemoryFact.memory_type == "customer",
-            MemoryFact.source_type == "chat_explicit",
-            MemoryFact.key == key,
-        ).delete(synchronize_session=False)
-        db.add(MemoryFact(customer_ref=customer_ref, memory_type="customer", key=key, value=value,
-                          source_type="chat_explicit", source_id=source_id, confidence=1.0))
+        _upsert_chat_memory(db, customer_ref, key, value, source_id,
+                            source_type="chat_explicit", confidence=1.0)
         return "افتكرتها، وهستخدمها لما تكون ليها علاقة بكلامنا."
 
     forget_match = _MEMORY_FORGET_RE.fullmatch(text)
@@ -2076,6 +2163,11 @@ async def chat_turn(payload: ChatTurnInput, request: FastAPIRequest, db: Session
     history = [{"role": row.role.lower(), "content": row.content} for row in reversed(history_rows)]
     active_cases = linked_case_context(db, thread.id, customer_ref)
     memory_reply = apply_chat_memory_command(db, customer_ref, text, user_message.id)
+    if memory_reply is None:
+        learn_safe_chat_memory(db, customer_ref, text, user_message.id)
+    # Session autoflush is disabled; make newly learned/replaced memories
+    # visible to this same turn before building the provider context.
+    db.flush()
     memories = confirmed_chat_memories(db, customer_ref)
     turn_context = TurnContext(text, history, thread.locale, active_cases, attachments, memories)
     if memory_reply is not None:
